@@ -1,1 +1,1 @@
-# open-webui-easysearch
+## 🌐 EasySearch
