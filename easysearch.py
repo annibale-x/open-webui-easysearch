@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.1.5
+version: 0.2.1
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -107,10 +107,14 @@ class ConfigService:
         self.valves, self.user_valves = ctx.valves, ctx.user_valves
         self.start_time = time.time()
 
-        # Resolve Search Prefix (User Preference > Admin Default)
+        # Resolve Search Prefix from User Preference ONLY
         prefix = self.user_valves.search_prefix
-        if not prefix:
-            prefix = self.valves.search_prefix
+
+        # Resolve Gap-Filler / Result Count Assurance (User Override > Admin Global)
+        gap_filler_state = self.valves.auto_recovery_fetch
+
+        if self.user_valves.auto_recovery_fetch is not None:
+            gap_filler_state = self.user_valves.auto_recovery_fetch
 
         # Build Unified Configuration Model
         self.model = Store(
@@ -119,12 +123,13 @@ class ConfigService:
                 "search_prefix": prefix,
                 "max_search_queries": self.valves.max_search_queries,
                 "search_results_per_query": self.valves.search_results_per_query,
-                "max_total_results": self.valves.max_total_results,  # New Valve
-                "max_download_bytes": self.valves.max_download_mb
-                * 1024
-                * 1024,  # Convert MB to Bytes
+                "max_total_results": self.valves.max_total_results,
+                "max_download_bytes": self.valves.max_download_mb * 1024 * 1024,
                 "max_result_length": self.valves.max_result_length,
                 "debug": self.valves.debug or self.user_valves.debug,
+                "oversampling_factor": self.valves.oversampling_factor,
+                # --- Renamed for clarity in the model ---
+                "auto_recovery_fetch": gap_filler_state,
                 # --- Runtime State ---
                 "user_query": "",
                 "executed": False,
@@ -297,20 +302,21 @@ class WebSearchHandler:
 
     async def _execute_search(self, queries: List[str], target_count: int) -> Any:
         """
-        Calls Open WebUI search using a Shadow Request.
-        Overrides:
-        - BYPASS_WEB_SEARCH_WEB_LOADER: True (to use our internal fetcher)
-        - WEB_SEARCH_RESULT_COUNT: Dynamic (max of config default or user target)
+        Calls Open WebUI search with oversampling to ensure enough candidates after deduplication.
         """
+
         try:
-            # Dynamic Calculation:
-            # If user wants 10 pages (target_count), we must ask for AT LEAST 10 results per query
-            # to ensure we have enough candidates even if only 1 query is generated.
-            # We use the maximum of (Configured Default, User Target).
-            count_per_query = max(self.cfg.search_results_per_query, target_count)
+            # ⚠️ FIX: Using self.cfg (unified model) instead of self.valves
+            # The oversampling_factor is passed from Filter.Valves into the unified config model
+            factor = getattr(self.cfg, "oversampling_factor", 2)
+
+            # Request more results than target to compensate for duplicates/dead links
+            count_per_query = (
+                max(self.cfg.search_results_per_query, target_count) * factor
+            )
 
             self.log(
-                f"Executing Shadow Request. Overriding Result Count (Per Query) to: {count_per_query}"
+                f"Executing Shadow Request. Oversampling: {factor}x. Target Per Query: {count_per_query}"
             )
 
             overrides = {
@@ -320,10 +326,51 @@ class WebSearchHandler:
 
             shadow_req = ShadowRequest(self.request, overrides=overrides)
             form_data = SearchForm(queries=queries, collection_name="")
+
             return await process_web_search(shadow_req, form_data, self.user_obj)
+
         except Exception as e:
             self.log(f"Process Web Search Error: {e}", True)
             raise e
+
+    def _sanitize_url(self, url: str) -> str:
+        """
+        Removes common tracking parameters and fragments from the URL to improve deduplication
+        without breaking dynamic routing.
+        """
+
+        from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+
+        try:
+            parsed = urlparse(url)
+
+            # List of parameters that usually do not change the page content
+            tracking_params = {
+                "utm_source",
+                "utm_medium",
+                "utm_campaign",
+                "utm_term",
+                "utm_content",
+                "gclid",
+                "fbclid",
+                "msclkid",
+                "mc_cid",
+                "mc_eid",
+            }
+
+            query_dict = dict(parse_qsl(parsed.query))
+
+            filtered_query = {
+                k: v for k, v in query_dict.items() if k.lower() not in tracking_params
+            }
+
+            # Return URL without fragment and with filtered query string
+            return urlunparse(
+                parsed._replace(query=urlencode(filtered_query), fragment="")
+            )
+
+        except Exception:
+            return url
 
     async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
         """
@@ -416,68 +463,98 @@ class WebSearchHandler:
 
     async def _process_results(self, results: Any, target_count: int) -> Optional[str]:
         """
-        Parses results, fetches raw HTML in parallel, and builds context.
-        Limits fetching to 'target_count' unique URLs.
+        Parses results, fetches raw HTML in parallel with a fallback mechanism (Gap-Filler).
         """
+
         if not isinstance(results, dict) or "items" not in results:
             return None
 
         raw_items = results["items"]
+
         if not raw_items:
             return None
 
-        # --- DEDUPLICATION LOGIC START ---
+        # --- DEDUPLICATION & SANITIZATION START ---
         seen_urls = set()
-        items = []
-        dup = 0
+        unique_items = []
+
         for item in raw_items:
-            url = item.get("link", "")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                items.append(item)
-            else:
-                dup += 1
-        # --- DEDUPLICATION LOGIC END ---
+            original_url = item.get("link", "")
+
+            if not original_url:
+                continue
+
+            sanitized_url = self._sanitize_url(original_url)
+
+            if sanitized_url not in seen_urls:
+                seen_urls.add(sanitized_url)
+                # Store the sanitized URL in the item for consistency during fetching
+                item["sanitized_link"] = sanitized_url
+                unique_items.append(item)
 
         self.log(
-            f"Deduplication: {len(raw_items)} raw -> {len(items)} unique. Target: {target_count}"
+            f"Deduplication: {len(raw_items)} raw -> {len(unique_items)} unique. Target: {target_count}"
         )
 
-        # Slice items to target count BEFORE fetching
-        items = items[:target_count]
+        # --- ROUND 1: INITIAL FETCH ---
+        candidates = unique_items[:target_count]
+        remaining_pool = unique_items[target_count:]
 
-        urls_to_fetch = []
-        for item in items:
-            url = item.get("link", "")
-            if url:
-                urls_to_fetch.append(url)
-            await self.em.emit_citation(
-                item.get("title", "Source"), item.get("snippet", ""), url
-            )
-
+        urls_to_fetch = [item.get("link") for item in candidates]
         fetched_html_map = {}
+
         if HTTPX_AVAILABLE and LXML_AVAILABLE and urls_to_fetch:
-            await self.em.emit_status(f"Deep reading {len(urls_to_fetch)} pages", False)
+            await self.em.emit_status(f"Reading {len(urls_to_fetch)} pages", False)
             fetched_html_map = await self._fetch_concurrently(urls_to_fetch)
 
+        # --- ROUND 2: GAP FILLER (Controlled by auto_recovery_fetch) ---
+        success_count = len([v for v in fetched_html_map.values() if v])
+
+        # Use the unified and renamed config key
+        enable_gap = getattr(self.cfg, "auto_recovery_fetch", True)
+
+        if enable_gap and success_count < target_count and remaining_pool:
+
+            gap_size = target_count - success_count
+
+            if self.debug:
+                self.debug.log(
+                    f"Gap detected: {gap_size} missing. Triggering thorough search."
+                )
+
+            await self.em.emit_status(f"⚠️ Recovering {gap_size} failed pages", False)
+
+            backup_candidates = remaining_pool[:gap_size]
+            backup_urls = [item.get("link") for item in backup_candidates]
+
+            backup_html_map = await self._fetch_concurrently(backup_urls)
+            fetched_html_map.update(backup_html_map)
+
+            # Combine candidates for final processing
+            candidates.extend(backup_candidates)
+
+        # --- FINAL CONTEXT CONSTRUCTION ---
         context_parts = []
-        max_len = self.cfg.max_result_length  # Use unified config
+        max_len = self.cfg.max_result_length
 
         noise_pattern = re.compile(
             r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
             re.IGNORECASE,
         )
 
-        for i, item in enumerate(items):
-            url = item.get("link", "")
-            title = item.get("title", "Source")
-            text = ""
+        # Iterate over combined candidates that actually have content
+        source_id = 1
 
-            if url in fetched_html_map:
-                text = self._clean_with_lxml(fetched_html_map[url])
+        for item in candidates:
+            url = item.get("link", "")
+
+            if url not in fetched_html_map or not fetched_html_map[url]:
+                continue
+
+            text = self._clean_with_lxml(fetched_html_map[url])
 
             if not text:
-                text = item.get("snippet", "")
+                continue
 
             # Cleaning Pipeline
             text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -513,8 +590,14 @@ class WebSearchHandler:
                 text = text[:max_len] + "... [TRUNCATED]"
 
             context_parts.append(
-                f"--- Source {i+1}: {title} ---\nURL: {url}\nContent:\n{text}\n"
+                f"--- Source {source_id}: {item.get('title', 'Source')} ---\nURL: {url}\nContent:\n{text[:max_len]}\n"
             )
+
+            await self.em.emit_citation(
+                item.get("title", "Source"), item.get("snippet", ""), url
+            )
+
+            source_id += 1
 
         return "\n".join(context_parts)
 
@@ -634,12 +717,6 @@ class Filter:
 
     class Valves(BaseModel):
         # Admin / Infrastructure Settings
-        search_prefix: str = Field(
-            default="??",
-            description="Default Trigger prefix (Admin).",
-            min_length=1,
-            max_length=3,
-        )
         max_search_queries: int = Field(
             default=3,
             ge=1,
@@ -668,15 +745,29 @@ class Filter:
             ge=500,
             description="Max characters per search result context.",
         )
+        oversampling_factor: int = Field(
+            default=2,
+            ge=1,
+            le=4,
+            description="Multiplier for search results to provide a buffer for deduplication/dead links.",
+        )
+        auto_recovery_fetch: bool = Field(
+            default=False,
+            description="If enabled, performs a second search round to replace failed or empty pages.",
+        )
         debug: bool = Field(default=False)
 
     class UserValves(BaseModel):
         # User Preferences
         search_prefix: Optional[str] = Field(
-            default=None,
+            default="??",
             description="Custom Trigger prefix. Leave empty to use Admin default.",
             min_length=1,
             max_length=3,
+        )
+        auto_recovery_fetch: bool = Field(
+            default=False,
+            description="If enabled, performs a second search round to replace failed or empty pages.",
         )
         debug: bool = Field(default=False)
 
@@ -686,14 +777,12 @@ class Filter:
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """
-        Parse input for trigger with optional numeric modifier.
+        Parse input for trigger using ONLY user-defined prefix.
         Syntax: '??' or '??N' (where N is int).
-        Strict check: Must be followed by space or end of string.
         """
-        # Resolve prefix (User > Admin)
+
+        # Resolve prefix exclusively from UserValves
         prefix = self.user_valves.search_prefix
-        if not prefix:
-            prefix = self.valves.search_prefix
 
         if not txt.startswith(prefix):
             return None
@@ -881,6 +970,9 @@ class Filter:
 
                 self.ctx.model.executed = True
                 self.debug.log("Search executed & History wiped.")
+
+                # Signal the UI that the search process is finished and the model is now thinking
+                await self.em.emit_status("Thinking...", False)
 
         except Exception as e:
             await self.debug.error(e)
