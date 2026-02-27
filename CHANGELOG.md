@@ -1,3 +1,11 @@
+* 2026-02-27: v0.2.1 - Search Resilience & UX Milestone (Hannibal)
+  * Implemented URL Sanitization to filter tracking parameters (UTM, etc.) and fragments.
+  * Added Oversampling logic in search execution to ensure a healthy candidate pool.
+  * Implemented Auto-Recovery Fetch (Gap-Filler) to maintain the requested source count.
+  * Moved search_prefix to UserValves for full user customization.
+  * Added "Thinking..." UI status emission at the end of the inlet phase.
+  * Integrated unified configuration mapping in ConfigService for all new valves.
+
 * 2026-02-27: v0.1.5 - Dynamic Fetching & Safety Caps (Hannibal)
   * Implemented dynamic calculation for `WEB_SEARCH_RESULT_COUNT` override: now uses `max(default, user_target)` to prevent underfetching when few queries are generated.
   * Added `max_total_results` Valve (default: 20) as a hard safety cap to prevent user abuse (e.g., `??1000`).
