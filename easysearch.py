@@ -1,8 +1,8 @@
 """
 title: 🌐 EasySearch
-version: 0.1.1
+version: 0.1.5
 author: Hannibal
-https://github.com/annibale-x/open-webui-easysearch
+repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
 description: High-performance Web Search filter. Triggers: '?? <query>' or '??' (context-aware).
@@ -44,7 +44,6 @@ except ImportError:
 
 APP_ICON = "🌐"
 APP_NAME = "EasySearch"
-MAX_CHARS_PER_WEB_RESULT = 10000
 TRACE = False
 
 
@@ -100,6 +99,7 @@ class Store(dict):
 class ConfigService:
     """
     Service for handling configuration, valves, and internal state.
+    Centralizes 'splatting' of Admin Valves and User Valves into a single model.
     """
 
     def __init__(self, ctx):
@@ -107,10 +107,25 @@ class ConfigService:
         self.valves, self.user_valves = ctx.valves, ctx.user_valves
         self.start_time = time.time()
 
+        # Resolve Search Prefix (User Preference > Admin Default)
+        prefix = self.user_valves.search_prefix
+        if not prefix:
+            prefix = self.valves.search_prefix
+
+        # Build Unified Configuration Model
         self.model = Store(
             {
-                "search_prefix": f"{self.valves.search_prefix}",
-                "debug": ctx.valves.debug or ctx.user_valves.debug,
+                # --- Configuration (Merged) ---
+                "search_prefix": prefix,
+                "max_search_queries": self.valves.max_search_queries,
+                "search_results_per_query": self.valves.search_results_per_query,
+                "max_total_results": self.valves.max_total_results,  # New Valve
+                "max_download_bytes": self.valves.max_download_mb
+                * 1024
+                * 1024,  # Convert MB to Bytes
+                "max_result_length": self.valves.max_result_length,
+                "debug": self.valves.debug or self.user_valves.debug,
+                # --- Runtime State ---
                 "user_query": "",
                 "executed": False,
                 "web_search_original": False,
@@ -121,22 +136,21 @@ class ConfigService:
 class ShadowRequest:
     """
     A thread-safe proxy for the Request object.
-    It intercepts access to `app.state.config.BYPASS_WEB_SEARCH_WEB_LOADER`
-    without modifying the global singleton state.
+    Allows overriding specific app.state.config attributes dynamically.
     """
 
-    def __init__(self, original_request, override_bypass: bool):
+    def __init__(self, original_request, overrides: Dict[str, Any]):
         self._req = original_request
-        self._override_bypass = override_bypass
+        self._overrides = overrides
 
         class ConfigProxy:
-            def __init__(self, real_config, bypass_val):
+            def __init__(self, real_config, overrides):
                 self._real = real_config
-                self._bypass = bypass_val
+                self._overrides = overrides
 
             def __getattr__(self, name):
-                if name == "BYPASS_WEB_SEARCH_WEB_LOADER":
-                    return self._bypass
+                if name in self._overrides:
+                    return self._overrides[name]
                 return getattr(self._real, name)
 
         class StateProxy:
@@ -164,7 +178,7 @@ class ShadowRequest:
         real_config = real_state.config
 
         self.app = AppProxy(
-            real_app, StateProxy(real_state, ConfigProxy(real_config, override_bypass))
+            real_app, StateProxy(real_state, ConfigProxy(real_config, overrides))
         )
 
     def __getattr__(self, name):
@@ -184,11 +198,13 @@ class WebSearchHandler:
         request,
         user_id: str,
         emitter: Any,
+        config: Any,  # Receives the unified ConfigService model
         debug_service: Any = None,
     ):
         self.request = request
         self.user_id = user_id
         self.em = emitter
+        self.cfg = config  # Store unified config
         self.debug = debug_service
         self.user_obj = Users.get_user_by_id(user_id)
 
@@ -196,25 +212,34 @@ class WebSearchHandler:
         if self.debug:
             self.debug.log(f"[WebSearchHandler] {msg}", is_error)
 
-    async def search(
-        self, query: str, model: str, max_queries: int = 3
-    ) -> Optional[str]:
+    async def search(self, query: str, model: str, result_count: int) -> Optional[str]:
         """
-        Main entry point: Generates queries, executes search, emits citations, returns formatted context.
+        Main entry point.
+        :param result_count: Number of actual web pages to fetch and read (N).
         """
         try:
-            # 1. Generate Queries
+            # Clamp result_count to max_total_results (Safety Cap)
+            max_cap = self.cfg.max_total_results
+            final_count = min(result_count, max_cap)
+
+            self.log(
+                f"Starting search cycle. Requested: {result_count}, Max Cap: {max_cap}, Final Target: {final_count}"
+            )
+
+            # 1. Generate Queries (Limit from Config)
+            gen_count = self.cfg.max_search_queries
             await self.em.emit_status("Generating Search Queries", False)
-            queries = await self._generate_queries(query, model, max_queries)
+            queries = await self._generate_queries(query, model, gen_count)
 
             if not queries:
                 queries = [query]
 
-            self.log(f"Generated Queries: {queries}")
+            self.log(f"Generated Queries ({len(queries)}): {queries}")
             await self.em.emit_search_queries(queries)
 
             # 2. Execute Search (Bypassing OWUI Loader safely)
-            results = await self._execute_search(queries)
+            # Pass final_count to calculate dynamic results per query
+            results = await self._execute_search(queries, final_count)
 
             if self.debug and TRACE:
                 self.debug.dump(results, "RAW SEARCH RESULTS")
@@ -223,8 +248,8 @@ class WebSearchHandler:
                 await self.em.emit_status("⚠️ No results found", True)
                 return None
 
-            # 3. Process Results (Parallel Fetch + LXML + Heuristics)
-            formatted_context = await self._process_results(results)
+            # 3. Process Results (Fetch N pages)
+            formatted_context = await self._process_results(results, final_count)
 
             if TRACE:
                 self.debug.log(f"Formatted results: {formatted_context}")
@@ -270,12 +295,30 @@ class WebSearchHandler:
             self.log(f"Query Gen Error: {e}", True)
             return [text]
 
-    async def _execute_search(self, queries: List[str]) -> Any:
+    async def _execute_search(self, queries: List[str], target_count: int) -> Any:
         """
-        Calls Open WebUI search using a Shadow Request to safely bypass the loader.
+        Calls Open WebUI search using a Shadow Request.
+        Overrides:
+        - BYPASS_WEB_SEARCH_WEB_LOADER: True (to use our internal fetcher)
+        - WEB_SEARCH_RESULT_COUNT: Dynamic (max of config default or user target)
         """
         try:
-            shadow_req = ShadowRequest(self.request, override_bypass=True)
+            # Dynamic Calculation:
+            # If user wants 10 pages (target_count), we must ask for AT LEAST 10 results per query
+            # to ensure we have enough candidates even if only 1 query is generated.
+            # We use the maximum of (Configured Default, User Target).
+            count_per_query = max(self.cfg.search_results_per_query, target_count)
+
+            self.log(
+                f"Executing Shadow Request. Overriding Result Count (Per Query) to: {count_per_query}"
+            )
+
+            overrides = {
+                "BYPASS_WEB_SEARCH_WEB_LOADER": True,
+                "WEB_SEARCH_RESULT_COUNT": count_per_query,
+            }
+
+            shadow_req = ShadowRequest(self.request, overrides=overrides)
             form_data = SearchForm(queries=queries, collection_name="")
             return await process_web_search(shadow_req, form_data, self.user_obj)
         except Exception as e:
@@ -284,7 +327,7 @@ class WebSearchHandler:
 
     async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
         """
-        Fetches multiple URLs in parallel using HTTPX.
+        Fetches multiple URLs in parallel using HTTPX with streaming and size limit.
         """
         if not HTTPX_AVAILABLE or not urls:
             return {}
@@ -294,11 +337,43 @@ class WebSearchHandler:
         if verify_ssl == "":
             verify_ssl = True
 
+        # Use configured limit from unified model
+        max_bytes = self.cfg.max_download_bytes
+        self.log(f"Fetching {len(urls)} URLs with limit {max_bytes} bytes/page")
+
         timeout = httpx.Timeout(8.0, connect=5.0)
         limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
+
+        async def fetch_single(client, url):
+            try:
+                req = client.build_request("GET", url)
+                response = await client.send(req, stream=True)
+
+                if response.status_code != 200:
+                    await response.aclose()
+                    return None
+
+                body = b""
+                async for chunk in response.aiter_bytes():
+                    body += chunk
+                    if len(body) > max_bytes:
+                        # Cut connection immediately to save bandwidth/RAM
+                        await response.aclose()
+                        break
+
+                await response.aclose()
+
+                # Decode safely
+                encoding = response.encoding or "utf-8"
+                return body.decode(encoding, errors="replace")
+
+            except Exception as e:
+                if self.debug:
+                    self.debug.log(f"Fetch failed for {url}: {e}")
+                return None
 
         try:
             async with httpx.AsyncClient(
@@ -310,17 +385,12 @@ class WebSearchHandler:
                 trust_env=True,
             ) as client:
 
-                tasks = []
-                for url in urls:
-                    tasks.append(client.get(url))
-
+                tasks = [fetch_single(client, url) for url in urls]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for url, resp in zip(urls, responses):
-                    if isinstance(resp, httpx.Response) and resp.status_code == 200:
-                        results[url] = resp.text
-                    elif self.debug and isinstance(resp, Exception):
-                        self.debug.log(f"Fetch failed for {url}: {resp}")
+                for url, content in zip(urls, responses):
+                    if isinstance(content, str):
+                        results[url] = content
 
         except Exception as e:
             self.log(f"HTTPX Batch Error: {e}", True)
@@ -344,10 +414,10 @@ class WebSearchHandler:
         except Exception:
             return ""
 
-    async def _process_results(self, results: Any) -> Optional[str]:
+    async def _process_results(self, results: Any, target_count: int) -> Optional[str]:
         """
         Parses results, fetches raw HTML in parallel, and builds context.
-        Includes Deduplication to prevent processing the same URL multiple times.
+        Limits fetching to 'target_count' unique URLs.
         """
         if not isinstance(results, dict) or "items" not in results:
             return None
@@ -357,7 +427,6 @@ class WebSearchHandler:
             return None
 
         # --- DEDUPLICATION LOGIC START ---
-        # Filter out duplicate URLs coming from multiple search queries
         seen_urls = set()
         items = []
         dup = 0
@@ -368,13 +437,14 @@ class WebSearchHandler:
                 items.append(item)
             else:
                 dup += 1
-
-        if dup:
-            await self.em.emit_status(
-                f"Skipped {dup} duplicate{'s' if dup != 1 else ''}", False
-            )
-
         # --- DEDUPLICATION LOGIC END ---
+
+        self.log(
+            f"Deduplication: {len(raw_items)} raw -> {len(items)} unique. Target: {target_count}"
+        )
+
+        # Slice items to target count BEFORE fetching
+        items = items[:target_count]
 
         urls_to_fetch = []
         for item in items:
@@ -391,6 +461,7 @@ class WebSearchHandler:
             fetched_html_map = await self._fetch_concurrently(urls_to_fetch)
 
         context_parts = []
+        max_len = self.cfg.max_result_length  # Use unified config
 
         noise_pattern = re.compile(
             r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
@@ -437,8 +508,9 @@ class WebSearchHandler:
             text = "\n".join(cleaned_lines)
             text = re.sub(r"\n{3,}", "\n\n", text)
 
-            if len(text) > MAX_CHARS_PER_WEB_RESULT:
-                text = text[:MAX_CHARS_PER_WEB_RESULT] + "... [TRUNCATED]"
+            # Dynamic Truncation
+            if len(text) > max_len:
+                text = text[:max_len] + "... [TRUNCATED]"
 
             context_parts.append(
                 f"--- Source {i+1}: {title} ---\nURL: {url}\nContent:\n{text}\n"
@@ -558,24 +630,53 @@ class DebugService:
 
 class Filter:
     # Set high priority to ensure this filter runs LAST in the pipeline.
-    # This prevents the history wiping from breaking other filters.
     priority = 999
 
     class Valves(BaseModel):
+        # Admin / Infrastructure Settings
         search_prefix: str = Field(
-            default="?",
-            description="Prefix for Search. Double it ('??') to trigger.",
+            default="??",
+            description="Default Trigger prefix (Admin).",
             min_length=1,
-            max_length=1,
+            max_length=3,
+        )
+        max_search_queries: int = Field(
+            default=3,
+            ge=1,
+            le=5,
+            description="Max distinct search queries generated by LLM.",
+        )
+        search_results_per_query: int = Field(
+            default=5,
+            ge=1,
+            le=20,
+            description="Minimum results to fetch per query (Default).",
+        )
+        max_total_results: int = Field(
+            default=20,
+            ge=1,
+            le=50,
+            description="Hard limit on total pages to read (Safety Cap).",
+        )
+        max_download_mb: int = Field(
+            default=1,
+            ge=1,
+            description="Max download size per page in MB (Anti-Flood).",
+        )
+        max_result_length: int = Field(
+            default=4000,
+            ge=500,
+            description="Max characters per search result context.",
         )
         debug: bool = Field(default=False)
 
     class UserValves(BaseModel):
-        max_search_queries: int = Field(
-            default=3,
-            ge=1,
-            le=10,
-            description="Max number of parallel search queries to generate.",
+        # User Preferences
+        search_prefix: Optional[str] = Field(
+            default=None,
+            description="Custom Trigger prefix. Leave empty to use Admin default.",
+            min_length=1,
+            max_length=3,
         )
         debug: bool = Field(default=False)
 
@@ -585,22 +686,55 @@ class Filter:
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """
-        Parse input for '??' trigger.
-        Returns dict with content if triggered, else None.
+        Parse input for trigger with optional numeric modifier.
+        Syntax: '??' or '??N' (where N is int).
+        Strict check: Must be followed by space or end of string.
         """
-        S = self.valves.search_prefix
-        trigger = f"{S}{S}"  # e.g. "??"
+        # Resolve prefix (User > Admin)
+        prefix = self.user_valves.search_prefix
+        if not prefix:
+            prefix = self.valves.search_prefix
 
-        if not txt.startswith(trigger):
+        if not txt.startswith(prefix):
             return None
 
-        # Extract content after "??"
-        content = txt[len(trigger) :].strip()
+        # Remove prefix to get the "payload"
+        payload = txt[len(prefix) :]
 
-        return {
-            "is_search": True,
-            "content": content,
-        }
+        # Default values
+        # If no N is specified, default to Max Possible (Query Count * Results Per Query)
+        # This ensures we fetch ALL candidates found by the search engine
+        target_count = (
+            self.valves.max_search_queries * self.valves.search_results_per_query
+        )
+        content = ""
+
+        # Case 1: Empty payload (Just "??")
+        if not payload:
+            return {"is_search": True, "content": "", "target_count": target_count}
+
+        # Case 2: Payload starts with space (Standard "?? query")
+        if payload[0] == " ":
+            content = payload.strip()
+            return {"is_search": True, "content": content, "target_count": target_count}
+
+        # Case 3: Payload starts with number (Modifier "??10 query")
+        # Split by first space to isolate potential number
+        parts = payload.split(" ", 1)
+        potential_number = parts[0]
+
+        if potential_number.isdigit():
+            target_count = int(potential_number)
+            if len(parts) > 1:
+                content = parts[1].strip()
+            else:
+                content = ""  # "??10" (Context search with N pages)
+
+            return {"is_search": True, "content": content, "target_count": target_count}
+
+        # Case 4: Payload starts with text (Invalid "??query")
+        # We want to ignore this to avoid false positives
+        return None
 
     async def _extract_query_from_context(
         self, context_text: str, model: str, user_id: str
@@ -681,10 +815,14 @@ class Filter:
         await self.em.emit_status("EasySearch initialized", False)
 
         # Phase 3: State Management
+        # ConfigService is initialized here, merging Valves and UserValves
         self.ctx.model.web_search_original = body.get("features", {}).get(
             "web_search", False
         )
         content = parsed["content"]
+
+        # Override default count if specified in trigger
+        target_count = parsed["target_count"]
 
         # Phase 4: Context Resolution (Empty Trigger '??')
         if not content and len(msg_list) > 1:
@@ -699,26 +837,27 @@ class Filter:
             self.debug.log(
                 f"Empty trigger detected. Using context: {context_text[:50]}..."
             )
-            await self.em.emit_status("Extracting query from context...", False)
+            await self.em.emit_status("Extracting query from context", False)
 
             # Generate query from context
             content = await self._extract_query_from_context(
                 context_text, body.get("model"), __user__["id"]
             )
             self.debug.log(f"Extracted Query: {content}")
-            await self.em.emit_status(f"Searching: {content[:60]}...", False)
+            await self.em.emit_status(f"Searching {target_count} pages", False)
 
         self.ctx.model.user_query = content
 
         try:
             # Phase 5: Search Execution
+            # Pass the unified ConfigService model (self.ctx.model) to handler
             search_handler = WebSearchHandler(
-                self.request, __user__["id"], self.em, self.debug
+                self.request, __user__["id"], self.em, self.ctx.model, self.debug
             )
 
             # Execute Search Cycle (Generate -> Search -> Process)
             search_context = await search_handler.search(
-                content, body.get("model"), self.user_valves.max_search_queries
+                content, body.get("model"), target_count
             )
 
             if search_context:
@@ -731,7 +870,8 @@ class Filter:
                 instr = (
                     f"Search Query: {content}\n\n"
                     f"INSTRUCTION: Answer the query above using ONLY the provided search results/context below. "
-                    f"Do not hallucinate or use prior conversation memory if unrelated.\n\n"
+                    f"Do not hallucinate or use prior conversation memory if unrelated.\n"
+                    f"Always cite sources using [1], [2] format corresponding to the Source ID.\n\n"
                     f"--- SEARCH RESULTS ---\n{search_context}"
                 )
 
