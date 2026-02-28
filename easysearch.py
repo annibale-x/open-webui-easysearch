@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.8
+version: 0.2.9
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -859,7 +859,7 @@ class Filter:
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """
         Parse input for trigger using ONLY user-defined prefix and colon-separated modifiers.
-        Syntax: '??', '??:7', '??:en', '??:c3', '??:en:10:c2'.
+        Supports dual-language syntax: '??:en>it' (search in EN, respond in IT).
         """
 
         prefix = self.user_valves.search_prefix
@@ -878,22 +878,36 @@ class Filter:
         target_count = (
             self.valves.max_search_queries * self.valves.search_results_per_query
         )
-        lang = None
+        search_lang = None
+        response_lang = None
         context_count = self.user_valves.default_context_count
 
         for token in tokens:
+
             if token.isdigit():
                 target_count = int(token)
+
             elif token.startswith("c") and token[1:].isdigit():
                 context_count = int(token[1:])
+
+            elif ">" in token:
+                lang_parts = token.split(">")
+
+                if len(lang_parts) == 2 and all(
+                    len(p) == 2 and p.isalpha() for p in lang_parts
+                ):
+                    search_lang = lang_parts[0].lower()
+                    response_lang = lang_parts[1].lower()
+
             elif len(token) == 2 and token.isalpha():
-                lang = token.lower()
+                search_lang = token.lower()
 
         return {
             "is_search": True,
             "content": content,
             "target_count": target_count,
-            "lang": lang,
+            "search_lang": search_lang,
+            "response_lang": response_lang,
             "context_count": context_count,
         }
 
@@ -972,10 +986,10 @@ class Filter:
 
         # Update model with parsed triggers
         self.ctx.model.user_query = parsed["content"]
-        self.ctx.model.search_language = parsed["lang"]
+        self.ctx.model.search_language = parsed["search_lang"]
 
         self.debug.log(
-            f"Trigger recognized: lang={parsed['lang']}, count={parsed['target_count']}, query='{parsed['content']}'"
+            f"Trigger recognized: search_lang={parsed['search_lang']}, resp_lang={parsed['response_lang']}, count={parsed['target_count']}, query='{parsed['content']}'"
         )
 
         if TRACE:
@@ -1045,24 +1059,26 @@ class Filter:
                 self.ctx.model.user_query,
                 body.get("model"),
                 parsed["target_count"],
-                parsed["lang"],
+                parsed["search_lang"],
             )
 
             if search_context:
-                # Disable Native Web Search
+
                 if "features" not in body:
                     body["features"] = {}
 
                 body["features"]["web_search"] = False
                 body["features"]["retrieval"] = False
 
-                # Construct System Instruction
-                target_lang = parsed.get("lang")
-                lang_instruction = (
-                    f"You MUST write your response in the EXACT SAME LANGUAGE as the search query."
-                    if not target_lang
-                    else f"You MUST write your response EXCLUSIVELY in the following language: {target_lang.upper()}."
-                )
+                # Construct System Instruction with Smart Default logic
+                resp_lang = parsed.get("response_lang")
+
+                if resp_lang:
+                    lang_instruction = f"You MUST write your response EXCLUSIVELY in the following language: {resp_lang.upper()}."
+
+                else:
+                    lang_instruction = "You MUST write your response in the EXACT SAME LANGUAGE as the user's prompt (e.g., if the user asked in Italian, answer in Italian)."
+
                 instr = (
                     f"Search Query: {self.ctx.model.user_query}\n\n"
                     f"INSTRUCTION: Answer the query above using ONLY the provided search results.\n"
