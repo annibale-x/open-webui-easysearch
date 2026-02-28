@@ -1,3 +1,9 @@
+* 2026-02-28: v0.3.0 - Resilient Double-Layer Context (Hannibal)
+  * Implemented "Snippet-First" fallback logic in `_process_results` to prevent signal loss.
+  * Added oversampling pool injection: all retrieved snippets are now fed to the LLM for massive signal density.
+  * Enhanced System Prompt to enforce prioritization of Snippets over noisy/empty Scraped Content.
+  * Refactored result formatting to distinguish between 'Summary' and 'Full Content'.
+
 * 2026-02-28: v0.2.9 - Multi-Language Synthesis & Smart Defaults (Hannibal)
   * Implemented dual-language syntax `??:src>dest` for decoupled search/response.
   * Added Smart Default logic: responses follow user prompt language unless overridden.
