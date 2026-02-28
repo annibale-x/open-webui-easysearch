@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.3.0
+version: 0.3.1
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -548,10 +548,29 @@ class WebSearchHandler:
         seen_urls = set()
         unique_items = []
 
+        bad_exts = (
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".exe",
+        )
+
         for item in raw_items:
             original_url = item.get("link", "")
 
             if not original_url:
+                continue
+
+            # Block ALL binary/document extensions before fetching
+            clean_url_base = original_url.lower().split("?")[0].split("#")[0]
+            if clean_url_base.endswith(bad_exts):
                 continue
 
             sanitized_url = self._sanitize_url(original_url)
@@ -600,7 +619,15 @@ class WebSearchHandler:
             backup_html_map = await self._fetch_concurrently(backup_urls)
 
             fetched_html_map.update(backup_html_map)
-            candidates.extend(backup_candidates)
+            new_candidates = []
+            for c in candidates:
+                if fetched_html_map.get(c.get("link")):
+                    new_candidates.append(c)
+                else:
+                    remaining_pool.insert(0, c)  # Demote to snippet-only pool
+
+            new_candidates.extend(backup_candidates)
+            candidates = new_candidates
 
         # --- FINAL CONTEXT CONSTRUCTION ---
         context_parts = []
@@ -624,23 +651,40 @@ class WebSearchHandler:
                 text = await self._clean_with_lxml(raw_html)
 
             # HEURISTIC: Use snippet if scraping resulted in low-quality/empty content
-            if not text or len(text) < len(snippet):
+            if not text or len(text) < len(snippet) or text.count("\ufffd") > 10:
                 text = (
                     f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
                 )
 
             # Cleaning Pipeline
             text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+            # Aggressive sterilization (C0/C1 codes, \ufffd, and Zero-Width/BiDi codes)
+            # \u200b-\u200f: Zero-width spaces and formatting
+            # \u202a-\u202e, \u2066-\u2069: Bi-Directional text overrides
+            text = re.sub(
+                r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffd\u200b-\u200f\u202a-\u202e\u2066-\u2069]+",
+                " ",
+                text,
+            )
+
             text = re.sub(r"[ \t\u00A0]+", " ", text)
 
             lines = text.split("\n")
             cleaned_lines = []
             prev_line = ""
 
+            # Aggiunta opzionale al ciclo for line in lines:
             for line in lines:
                 line = line.strip()
-
                 if not line:
+                    continue
+                # Salta le righe di cookie e privacy boilerplate
+                if (
+                    noise_pattern.match(line)
+                    or "Accetta tutto" in line
+                    or "Rifiuta tutto" in line
+                ):
                     continue
 
                 if noise_pattern.match(line):
@@ -927,6 +971,9 @@ class Filter:
 
             elif len(token) == 2 and token.isalpha():
                 search_lang = token.lower()
+                # ⚠️ SURGICAL FIX: Se viene fornita una sola lingua,
+                # forza anche la lingua di risposta ad essere identica.
+                response_lang = token.lower()
 
         return {
             "is_search": True,
@@ -1036,6 +1083,22 @@ class Filter:
         # Override default count if specified in trigger
         target_count = parsed["target_count"]
 
+        # Language Anchor Logic
+        if content:
+            language_anchor = content
+        else:
+            prev_msg = msg_list[-2].get("content", "") if len(msg_list) > 1 else ""
+            if isinstance(prev_msg, list):
+                language_anchor = " ".join(
+                    [
+                        str(p.get("text", ""))
+                        for p in prev_msg
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                )
+            else:
+                language_anchor = str(prev_msg)
+
         # Phase 4: Context Resolution (Empty Trigger '??')
         if not content and len(msg_list) > 1:
             # Get the previous messages based on context_count modifier or default
@@ -1058,7 +1121,7 @@ class Filter:
                 f"Empty trigger detected. Analyzing context window ({len(context_window)} msgs)"
             )
 
-            # ⚠️ SURGICAL FIX: Improved status message with context depth
+            # Improved status message with context depth
             status_msg = f"Extracting query from last {len(context_window)} {'msg' if len(context_window) == 1 else 'msgs'}"
             await self.em.emit_status(status_msg, False)
 
@@ -1071,7 +1134,6 @@ class Filter:
 
             # Update status to show the search is starting
             await self.em.emit_status(f"Searching {target_count} pages", False)
-
         self.ctx.model.user_query = content
 
         try:
@@ -1101,14 +1163,15 @@ class Filter:
 
                 if resp_lang:
                     lang_instruction = f"You MUST write your response EXCLUSIVELY in the following language: {resp_lang.upper()}."
-
                 else:
-                    lang_instruction = "You MUST write your response in the EXACT SAME LANGUAGE as the user's prompt (e.g., if the user asked in Italian, answer in Italian)."
+                    # Use the isolated Language Anchor to enforce response language
+                    safe_anchor = language_anchor.replace("\n", " ")[:300]
+                    lang_instruction = f'You MUST write your response in the EXACT SAME LANGUAGE used in this reference text: "{safe_anchor}". Do not be influenced by the language of the search results.'
 
                 instr = (
                     f"Search Query: {self.ctx.model.user_query}\n\n"
                     f"INSTRUCTION: Answer the query above using the provided search results.\n"
-                    f"CRITICAL: {lang_instruction} Do not be influenced by the language of the search results.\n"
+                    f"CRITICAL: {lang_instruction}\n"
                     f"RELIABILITY: If 'Full Content' is missing, irrelevant, or contains only menus, "
                     f"you MUST prioritize the 'Summary (Snippet)' as it contains the highly-relevant search anchor.\n"
                     f"CITATIONS: Use ONLY inline [1], [2] markers within the text. "
@@ -1136,6 +1199,9 @@ class Filter:
 
         except Exception as e:
             await self.debug.error(e)
+
+        if TRACE:
+            self.debug.dump(body, "FINAL PAYLOAD SENT TO LLM")
 
         return body
 

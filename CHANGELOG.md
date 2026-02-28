@@ -1,3 +1,10 @@
+* 2026-02-28: v0.3.1 - Linguistic Precision & Binary Scrubber (Hannibal)
+  * Fixed an issue where context-aware queries (`??`) would lose the original conversation language by implementing a strict `Language Anchor` using `msg_list[-2]`.
+  * Fixed a bug in `_parse_trigger` that caused single-language modifiers (e.g., `??:de`) to ignore the `response_lang` constraint.
+  * Introduced a Pre-Fetch Blacklist in `_process_results` to safely skip `.pdf`, `.docx`, `.zip` and other non-HTML binaries before establishing an HTTP connection.
+  * Upgraded the text cleaner with an Aggressive Scrubber regex to annihilate C0/C1 control codes, `\ufffd` replacements, and Zero-Width/Bi-Directional characters from dirty DOM elements.
+  * Fixed a bug in the Gap-Filler logic that caused the total source count to exceed the requested target.
+
 * 2026-02-28: v0.3.0 - Resilient Double-Layer Context (Hannibal)
   * Implemented "Snippet-First" fallback logic in `_process_results` to prevent signal loss.
   * Added oversampling pool injection: all retrieved snippets are now fed to the LLM for massive signal density.
