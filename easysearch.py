@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.6
+version: 0.2.7
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -1060,6 +1060,7 @@ class Filter:
                 instr = (
                     f"Search Query: {self.ctx.model.user_query}\n\n"
                     f"INSTRUCTION: Answer the query above using ONLY the provided search results.\n"
+                    f"CRITICAL: You MUST write your response in the EXACT SAME LANGUAGE used in the 'Search Query' above. Do not use the language of the search results or system prompts.\n"
                     f"Always cite sources using [1], [2] format.\n\n"
                     f"--- SEARCH RESULTS ---\n{search_context}"
                 )
