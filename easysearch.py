@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.2
+version: 0.2.4
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -54,6 +54,7 @@ TRACE = False
 QUERY_GENERATION_TEMPLATE = """### Task:
 Analyze the user request to determine the necessity of generating search queries.
 The aim is to retrieve comprehensive, updated, and valuable information.
+{LANG_RULE}
 ### Guidelines:
 - Respond **EXCLUSIVELY** with a JSON object. Any form of extra commentary is strictly prohibited.
 - Format: {{ "queries": ["query1", "query2"] }}
@@ -141,6 +142,7 @@ class ConfigService:
                 "auto_recovery_fetch": gap_filler_state,
                 # --- Runtime State ---
                 "user_query": "",
+                "search_language": None,  # Tracked for debug
                 "executed": False,
                 "web_search_original": False,
             }
@@ -226,7 +228,9 @@ class WebSearchHandler:
         if self.debug:
             self.debug.log(f"[WebSearchHandler] {msg}", is_error)
 
-    async def search(self, query: str, model: str, result_count: int) -> Optional[str]:
+    async def search(
+        self, query: str, model: str, result_count: int, lang: Optional[str] = None
+    ) -> Optional[str]:
         """
         Main entry point.
         :param result_count: Number of actual web pages to fetch and read (N).
@@ -237,13 +241,13 @@ class WebSearchHandler:
             final_count = min(result_count, max_cap)
 
             self.log(
-                f"Starting search cycle. Requested: {result_count}, Max Cap: {max_cap}, Final Target: {final_count}"
+                f"Starting search cycle. Requested: {result_count}, Max Cap: {max_cap}, Final Target: {final_count}, Lang: {lang}"
             )
 
             # 1. Generate Queries (Limit from Config)
             gen_count = self.cfg.max_search_queries
             await self.em.emit_status("Generating Search Queries", False)
-            queries = await self._generate_queries(query, model, gen_count)
+            queries = await self._generate_queries(query, model, gen_count, lang)
 
             if not queries:
                 queries = [query]
@@ -275,12 +279,25 @@ class WebSearchHandler:
             await self.em.emit_status(f"❌ Search Error: {str(e)}", True)
             return None
 
-    async def _generate_queries(self, text: str, model: str, count: int) -> List[str]:
+    async def _generate_queries(
+        self, text: str, model: str, count: int, lang: Optional[str] = None
+    ) -> List[str]:
         """Uses LLM to expand the user request into multiple search queries."""
+
         try:
-            prompt = QUERY_GENERATION_TEMPLATE.format(
-                COUNT=count, DATE=datetime.date.today(), REQUEST=text
+            lang_rule = (
+                f"- Search results and queries MUST be in the following language/locale: {lang}."
+                if lang
+                else ""
             )
+
+            prompt = QUERY_GENERATION_TEMPLATE.format(
+                COUNT=count,
+                DATE=datetime.date.today(),
+                REQUEST=text,
+                LANG_RULE=lang_rule,
+            )
+
             messages = [{"role": "user", "content": prompt}]
             form_data = {"model": model, "messages": messages, "stream": False}
 
@@ -464,20 +481,52 @@ class WebSearchHandler:
 
     def _clean_with_lxml(self, raw_html: str) -> str:
         """
-        Uses lxml to strip HTML tags, scripts, styles, and structural noise.
+        Uses lxml to strip HTML tags with a regex fallback.
         """
-        if not raw_html or not LXML_AVAILABLE:
+
+        if not raw_html:
             return ""
 
         try:
-            tree = lxml_html.fromstring(raw_html)
-            cleaner_xpath = "//script | //style | //nav | //footer | //header | //aside | //form | //iframe | //noscript | //div[contains(@class, 'menu')] | //div[contains(@class, 'footer')]"
-            for element in tree.xpath(cleaner_xpath):
-                element.drop_tree()
-            text = tree.text_content()
-            return text.strip()
+
+            if LXML_AVAILABLE:
+                tree = lxml_html.fromstring(raw_html)
+                cleaner_xpath = "//script | //style | //nav | //footer | //header | //aside | //form | //iframe | //noscript"
+
+                for element in tree.xpath(cleaner_xpath):
+                    element.drop_tree()
+
+                text = tree.text_content()
+                return text.strip()
+
+            return self._clean_fallback(raw_html)
+
         except Exception:
-            return ""
+            return self._clean_fallback(raw_html)
+
+    def _clean_fallback(self, html_content: str) -> str:
+        """
+        Simple regex-based fallback to strip HTML tags if lxml fails.
+        Mimics basic standard loader behavior.
+        """
+
+        # Remove scripts and styles
+        text = re.sub(
+            r"<(script|style|header|footer|nav)[^>]*>.*?</\1>",
+            "",
+            html_content,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Remove all other tags
+        text = re.sub(r"<[^>]+>", " ", text)
+
+        # Unescape HTML entities
+        import html
+
+        text = html.unescape(text)
+
+        return text.strip()
 
     async def _process_results(self, results: Any, target_count: int) -> Optional[str]:
         """
@@ -540,7 +589,8 @@ class WebSearchHandler:
                     f"Gap detected: {gap_size} missing. Triggering thorough search."
                 )
 
-            await self.em.emit_status(f"⚠️ Recovering {gap_size} failed pages", False)
+            msg = f"⚠️ Recovering {gap_size} failed {'page' if gap_size == 1 else 'pages'}"
+            await self.em.emit_status(msg, False)
 
             backup_candidates = remaining_pool[:gap_size]
             backup_urls = [item.get("link") for item in backup_candidates]
@@ -801,53 +851,42 @@ class Filter:
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """
-        Parse input for trigger using ONLY user-defined prefix.
-        Syntax: '??' or '??N' (where N is int).
+        Parse input for trigger using ONLY user-defined prefix and colon-separated modifiers.
+        Syntax: '??', '??:7', '??:en', '??:en:10', '??:10:en'.
         """
 
-        # Resolve prefix exclusively from UserValves
         prefix = self.user_valves.search_prefix
 
         if not txt.startswith(prefix):
             return None
 
-        # Remove prefix to get the "payload"
-        payload = txt[len(prefix) :]
+        # Split trigger part from query part
+        parts = txt.split(" ", 1)
+        trigger_part = parts[0]
+        content = parts[1].strip() if len(parts) > 1 else ""
+
+        # Extract tokens from trigger (e.g., ??:en:10 -> ['en', '10'])
+        tokens = trigger_part[len(prefix) :].split(":")
+        tokens = [t for t in tokens if t]
 
         # Default values
-        # If no N is specified, default to Max Possible (Query Count * Results Per Query)
-        # This ensures we fetch ALL candidates found by the search engine
         target_count = (
             self.valves.max_search_queries * self.valves.search_results_per_query
         )
-        content = ""
+        lang = None
 
-        # Case 1: Empty payload (Just "??")
-        if not payload:
-            return {"is_search": True, "content": "", "target_count": target_count}
+        for token in tokens:
+            if token.isdigit():
+                target_count = int(token)
+            elif len(token) == 2 and token.isalpha():
+                lang = token.lower()
 
-        # Case 2: Payload starts with space (Standard "?? query")
-        if payload[0] == " ":
-            content = payload.strip()
-            return {"is_search": True, "content": content, "target_count": target_count}
-
-        # Case 3: Payload starts with number (Modifier "??10 query")
-        # Split by first space to isolate potential number
-        parts = payload.split(" ", 1)
-        potential_number = parts[0]
-
-        if potential_number.isdigit():
-            target_count = int(potential_number)
-            if len(parts) > 1:
-                content = parts[1].strip()
-            else:
-                content = ""  # "??10" (Context search with N pages)
-
-            return {"is_search": True, "content": content, "target_count": target_count}
-
-        # Case 4: Payload starts with text (Invalid "??query")
-        # We want to ignore this to avoid false positives
-        return None
+        return {
+            "is_search": True,
+            "content": content,
+            "target_count": target_count,
+            "lang": lang,
+        }
 
     async def _extract_query_from_context(
         self, context_text: str, model: str, user_id: str
@@ -912,14 +951,22 @@ class Filter:
 
         # Phase 1: Parsing
         parsed = self._parse_trigger(txt)
+
         if not parsed:
             return body
 
         # Phase 2: Initialization
         self.ctx = ConfigService(self)
-        self.debug, self.em = (
-            DebugService(self),
-            EmitterService(__event_emitter__, self),
+        self.debug, self.em = DebugService(self), EmitterService(
+            __event_emitter__, self
+        )
+
+        # Update model with parsed triggers
+        self.ctx.model.user_query = parsed["content"]
+        self.ctx.model.search_language = parsed["lang"]
+
+        self.debug.log(
+            f"Trigger recognized: lang={parsed['lang']}, count={parsed['target_count']}, query='{parsed['content']}'"
         )
 
         if TRACE:
@@ -963,39 +1010,48 @@ class Filter:
 
         try:
             # Phase 5: Search Execution
-            # Pass the unified ConfigService model (self.ctx.model) to handler
             search_handler = WebSearchHandler(
                 self.request, __user__["id"], self.em, self.ctx.model, self.debug
             )
 
-            # Execute Search Cycle (Generate -> Search -> Process)
+            # Execute Search Cycle with language support
             search_context = await search_handler.search(
-                content, body.get("model"), target_count
+                self.ctx.model.user_query,
+                body.get("model"),
+                parsed["target_count"],
+                parsed["lang"],
             )
 
             if search_context:
-                # Disable Native Web Search to prevent double-search
+                # Disable Native Web Search
                 if "features" not in body:
                     body["features"] = {}
+
                 body["features"]["web_search"] = False
 
-                # Construct System Instruction with Search Results
+                # Construct System Instruction
                 instr = (
-                    f"Search Query: {content}\n\n"
-                    f"INSTRUCTION: Answer the query above using ONLY the provided search results/context below. "
-                    f"Do not hallucinate or use prior conversation memory if unrelated.\n"
-                    f"Always cite sources using [1], [2] format corresponding to the Source ID.\n\n"
+                    f"Search Query: {self.ctx.model.user_query}\n\n"
+                    f"INSTRUCTION: Answer the query above using ONLY the provided search results.\n"
+                    f"Always cite sources using [1], [2] format.\n\n"
                     f"--- SEARCH RESULTS ---\n{search_context}"
                 )
 
-                # WIPE HISTORY: Replace messages with the single search context message.
-                # This prevents RAG pollution and ensures focus on the new data.
-                body["messages"] = [{"role": "user", "content": instr}]
+                # PRESERVE SYSTEM PROMPTS
+                preserved_messages = [
+                    msg for msg in msg_list if msg.get("role") == "system"
+                ]
+
+                # Reconstruct history
+                body["messages"] = preserved_messages + [
+                    {"role": "user", "content": instr}
+                ]
 
                 self.ctx.model.executed = True
-                self.debug.log("Search executed & History wiped.")
+                self.debug.log(
+                    f"Search executed. Preserved {len(preserved_messages)} system messages."
+                )
 
-                # Signal the UI that the search process is finished and the model is now thinking
                 await self.em.emit_status("Thinking...", False)
 
         except Exception as e:

@@ -1,3 +1,11 @@
+* 2026-02-28: v0.2.4 - Multi-Modifier Syntax & Context Preservation (Hannibal)  
+  * Added support for colon-separated modifiers in triggers (e.g., `??:en:10`, `??:10:it`).
+  * Implemented System Prompt preservation to maintain model personality during search.
+  * Added regex-based fallback for HTML cleaning when lxml is unavailable or fails.
+  * Fixed a regression causing double search execution in the inlet phase.
+  * Implemented dynamic singular/plural logic for status recovery messages.
+  * Integrated search language tracking in the unified configuration model for better debugging.
+
 * 2026-02-28: v0.2.2 - Network Resilience & UA Rotation (Hannibal)
   * Added configurable search timeout via Admin Valves.
   * Implemented User-Agent rotation to prevent anti-scraping blocks.
