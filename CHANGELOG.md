@@ -1,3 +1,11 @@
+* 2026-02-28: v0.2.6 - Deep Context & RAG Lockdown (Hannibal)
+  * Implemented colon-separated modifiers for context window depth (e.g., `??:c3`).
+  * Added `default_context_count` User Valve to define default lookback for empty triggers.
+  * Enhanced UI status messages to show the exact number of messages analyzed during context extraction.
+  * Implemented safe RAG/Retrieval lockdown in `inlet` with mandatory restoration in `outlet`.
+  * Optimized User-Agent list (20 unique strings) by removing duplicates and diversifying browser fingerprints.
+  * Refined structural HTML cleaning using `lxml` with explicit error reporting for missing dependencies.
+
 * 2026-02-28: v0.2.5 - Full Logic Consolidation (Hannibal)
   * Consolidated multi-modifier parsing logic (e.g., ??:en:10).
   * Expanded User-Agent rotation to 20 unique strings for better stealth.
