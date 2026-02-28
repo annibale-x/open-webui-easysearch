@@ -1,3 +1,8 @@
+* 2026-02-28: v0.2.2 - Network Resilience & UA Rotation (Hannibal)
+  * Added configurable search timeout via Admin Valves.
+  * Implemented User-Agent rotation to prevent anti-scraping blocks.
+  * Improved concurrent fetching logic with dynamic headers.
+
 * 2026-02-27: v0.2.1 - Search Resilience & UX Milestone (Hannibal)
   * Implemented URL Sanitization to filter tracking parameters (UTM, etc.) and fragments.
   * Added Oversampling logic in search execution to ensure a healthy candidate pool.
