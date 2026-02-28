@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.4
+version: 0.2.5
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -80,10 +80,25 @@ Text: {TEXT}
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/122.0.0.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SAMSUNG SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/24.0 Chrome/117.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
 ]
 
 # --- CORE CLASSES ---
@@ -479,54 +494,40 @@ class WebSearchHandler:
 
         return results
 
-    def _clean_with_lxml(self, raw_html: str) -> str:
+    async def _clean_with_lxml(self, raw_html: str) -> str:
         """
-        Uses lxml to strip HTML tags with a regex fallback.
+        Uses lxml to strip HTML tags and noise. Requires lxml to be installed.
         """
 
         if not raw_html:
             return ""
 
+        if not LXML_AVAILABLE:
+            self.log(
+                "Critical Error: lxml library is missing in this environment.", True
+            )
+
+            await self.em.emit_status(
+                "❌ Error: lxml library missing (Required for EasySearch)", True
+            )
+            return ""
+
         try:
+            tree = lxml_html.fromstring(raw_html)
 
-            if LXML_AVAILABLE:
-                tree = lxml_html.fromstring(raw_html)
-                cleaner_xpath = "//script | //style | //nav | //footer | //header | //aside | //form | //iframe | //noscript"
+            cleaner_xpath = "//script | //style | //nav | //footer | //header | //aside | //form | //iframe | //noscript"
 
-                for element in tree.xpath(cleaner_xpath):
-                    element.drop_tree()
+            for element in tree.xpath(cleaner_xpath):
+                element.drop_tree()
 
-                text = tree.text_content()
-                return text.strip()
+            text = tree.text_content()
 
-            return self._clean_fallback(raw_html)
+            return text.strip()
 
-        except Exception:
-            return self._clean_fallback(raw_html)
+        except Exception as e:
+            self.log(f"lxml parsing failed: {e}", True)
 
-    def _clean_fallback(self, html_content: str) -> str:
-        """
-        Simple regex-based fallback to strip HTML tags if lxml fails.
-        Mimics basic standard loader behavior.
-        """
-
-        # Remove scripts and styles
-        text = re.sub(
-            r"<(script|style|header|footer|nav)[^>]*>.*?</\1>",
-            "",
-            html_content,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-
-        # Remove all other tags
-        text = re.sub(r"<[^>]+>", " ", text)
-
-        # Unescape HTML entities
-        import html
-
-        text = html.unescape(text)
-
-        return text.strip()
+            return ""
 
     async def _process_results(self, results: Any, target_count: int) -> Optional[str]:
         """
@@ -589,7 +590,7 @@ class WebSearchHandler:
                     f"Gap detected: {gap_size} missing. Triggering thorough search."
                 )
 
-            msg = f"⚠️ Recovering {gap_size} failed {'page' if gap_size == 1 else 'pages'}"
+            msg = f"Recovering {gap_size} failed {'page' if gap_size == 1 else 'pages'}"
             await self.em.emit_status(msg, False)
 
             backup_candidates = remaining_pool[:gap_size]
@@ -610,7 +611,6 @@ class WebSearchHandler:
             re.IGNORECASE,
         )
 
-        # Iterate over combined candidates that actually have content
         source_id = 1
 
         for item in candidates:
@@ -619,7 +619,7 @@ class WebSearchHandler:
             if url not in fetched_html_map or not fetched_html_map[url]:
                 continue
 
-            text = self._clean_with_lxml(fetched_html_map[url])
+            text = await self._clean_with_lxml(fetched_html_map[url])
 
             if not text:
                 continue
