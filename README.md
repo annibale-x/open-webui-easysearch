@@ -1,4 +1,4 @@
-## 🌐 EasySearch v0.2.8: High-Performance Web Search Filter
+## 🌐 EasySearch v0.3.0: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
@@ -8,6 +8,12 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
+### 🆕 What's New in v0.3.0
+
+- **Oversampling Pool Injection:** All retrieved search snippets from unread pages are now fed directly to the LLM providing provides massive signal density.
+- **Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
+
+---
 
 ### ✨ Main Features
 
@@ -56,6 +62,7 @@ The default trigger is `??`. You can type the trigger alone or follow it with a 
 | `??` | **Context Search**: Auto-generates a query based on the chat history. | `??` |
 | `??:<count>` | **Result Modifier**: Forces the system to read exactly `N` pages. | `??:10 quantum computing` |
 | `??:<lang>` | **Language Modifier**: Forces the search and results to be in a specific 2-letter ISO language. | `??:es tapas madrid` |
+| `??:<src>><dest>`| **Dual-Language Modifier**: Searches in the `<src>` language but responds in the `<dest>` language. | `??:en>it quantum computing` |
 | `??:c<count>` | **Context Modifier**: Tells the system how many previous messages to read when generating an automatic query. | `??:c3` (reads last 3 messages) |
 | **Combined** | Modifiers can be stacked effortlessly. | `??:15:fr:c2 latest news` |
 
@@ -109,6 +116,33 @@ Websites increasingly block bots with `403 Forbidden` errors. EasySearch combats
 
 #### 4. The Gap-Filler (Auto-Recovery)
 If the user requests 10 pages, but 3 of them result in timeouts or 403s, traditional scrapers return only 7 results. If `Auto Recovery Fetch` is enabled, EasySearch detects the gap and dynamically executes a secondary parallel fetch utilizing the "leftovers" from the Oversampling pool, guaranteeing the requested payload size.
+
+---
+
+### 💡 Advanced Pro-Tips for Power Users
+
+Master the advanced logic of EasySearch to get high-quality data even from difficult sources.
+
+#### 🌐 Dynamic Language Routing (The `src>dest` Pattern)
+EasySearch 0.3.0+ supports a dual-language syntax to separate the search context from the response language.
+* **Command:** `??:en>it latest news on semiconductor trade wars`
+* **How it works:** This tells the filter: *"Search and read pages in English (EN), but synthesize the final report in Italian (IT)"*.
+* **Smart Default:** If you use a single modifier like `??:en`, EasySearch will search in English but automatically attempt to respond in the language you used for your original prompt.
+
+#### 🚀 Overcoming "Scraping Imbalance"
+If a model claims "no relevant results found" even when citations are visible:
+* **The Cause:** High-authority sites often block scrapers. If Source 1 is blocked and Source 3 is open but irrelevant, the LLM might get distracted by the "noise".
+* **The Solution:** Use the `:count` modifier to increase the sample size (e.g., `??:15`). EasySearch automatically injects the **Search Snippets** of the unread pages into the context, guaranteeing a massive signal density even if the main pages fail to load.
+
+#### 🧠 Contextual "Lazy" Searching with Depth
+You can control how much history EasySearch analyzes to build its automatic query.
+* **Command:** `??:c5`
+* **Why it works:** By default, ES looks at the last message. With `:c5`, it analyzes the last 5 exchanges to build a sophisticated query that understands the nuance of a long conversation.
+
+#### 🧹 Token Optimization via Structural Cleaning
+EasySearch isn't just a scraper; it's a "cleaner." 
+* **Technical Detail:** It uses `lxml` to evaluate the DOM via XPath, surgically removing `<nav>`, `<footer>`, and `<script>` tags. 
+* **The Result:** You can fit more sources into a single prompt without hitting the model's context limit, as only the **pure article text** is preserved.
 
 ---
 
