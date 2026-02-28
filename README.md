@@ -1,4 +1,4 @@
-## 🌐 EasySearch v0.3.0: High-Performance Web Search Filter
+## 🌐 EasySearch v0.3.1: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
@@ -8,10 +8,12 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.3.0
+### 🆕 What's New in v0.3.1
 
-- **Oversampling Pool Injection:** All retrieved search snippets from unread pages are now fed directly to the LLM providing provides massive signal density.
-- **Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
+- **Fixed Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
+- **Linguistic Precision:** Improved "Smart Default" logic with a dedicated Language Anchor. Separating the search intent from the conversational language is now more accurate.
+- **Binary Scrubber:** Upgraded text cleaning engine that automatically detects and skips binary files (.pdf, .docx, .zip) and annihilates Unicode junk characters from dirty web sources.
+- **Oversampling Pool Injection:** All retrieved search snippets from unread pages are now fed directly to the LLM providing massive signal density.
 
 ---
 
@@ -43,7 +45,7 @@ You and the Assistant just had a long debate about renewable energy. You want so
 #### 3. The "Polyglot Researcher"
 You are chatting in Italian, but you need reliable technical documentation that is mostly written in English.
 * **You type:** `??:en pianificazione prossime missioni lunari`
-* **What happens:** The `:en` modifier forces the LLM to generate English search queries and strictly fetch English websites, seamlessly integrating the foreign data into your Italian conversation.
+* **What happens:** The `:en` modifier forces the LLM to generate English search queries and strictly fetch English websites, while the system automatically ensures the response remains in your conversational language (Italian).
 
 #### 4. The "Deep Dive Report"
 You need a comprehensive analysis, not just a quick answer.
@@ -58,11 +60,11 @@ The default trigger is `??`. You can type the trigger alone or follow it with a 
 
 | Command Syntax | Description | Example |
 | :--- | :--- | :--- |
-| `?? <query>` | **Standard Search**: Searches the web for your specific query. | `?? best pizza in Rome` |
-| `??` | **Context Search**: Auto-generates a query based on the chat history. | `??` |
+| `?? <query>` | **Standard Search**: Searches the web for your specific query. Response matches the prompt language. | `?? best pizza in Rome` |
+| `??` | **Context Search**: Auto-generates a query based on the chat history. Response matches the chat language. | `??` |
 | `??:<count>` | **Result Modifier**: Forces the system to read exactly `N` pages. | `??:10 quantum computing` |
-| `??:<lang>` | **Language Modifier**: Forces the search and results to be in a specific 2-letter ISO language. | `??:es tapas madrid` |
-| `??:<src>><dest>`| **Dual-Language Modifier**: Searches in the `<src>` language but responds in the `<dest>` language. | `??:en>it quantum computing` |
+| `??:<lang>` | **Full Language Lock**: Forces the search, the results, AND the model response to be in the specified language. | `??:de` (Search DE, Answer DE) |
+| `??:<src>><dest>`| **Dual-Language Modifier**: Decouples the search language from the response language. | `??:en>it quantum computing` |
 | `??:c<count>` | **Context Modifier**: Tells the system how many previous messages to read when generating an automatic query. | `??:c3` (reads last 3 messages) |
 | **Combined** | Modifiers can be stacked effortlessly. | `??:15:fr:c2 latest news` |
 
@@ -124,10 +126,11 @@ If the user requests 10 pages, but 3 of them result in timeouts or 403s, traditi
 Master the advanced logic of EasySearch to get high-quality data even from difficult sources.
 
 #### 🌐 Dynamic Language Routing (The `src>dest` Pattern)
-EasySearch 0.3.0+ supports a dual-language syntax to separate the search context from the response language.
-* **Command:** `??:en>it latest news on semiconductor trade wars`
-* **How it works:** This tells the filter: *"Search and read pages in English (EN), but synthesize the final report in Italian (IT)"*.
-* **Smart Default:** If you use a single modifier like `??:en`, EasySearch will search in English but automatically attempt to respond in the language you used for your original prompt.
+EasySearch 0.3.1 supports sophisticated language handling:
+* **Trigger:** `??` -> Infers intent from history. The response language is automatically anchored to the conversation.
+* **Trigger:** `??:de` -> Forces both the **Search** and the **Response** into German.
+* **Trigger:** `??:en>de` -> Separates the concerns: *"Search in English (EN) for better sources, but respond in German (DE)"*.
+* **Smart Language Anchor:** When using context-aware triggers (`??`), EasySearch uses a specialized "Reference Anchor" to ensure the model doesn't get confused by foreign search results and sticks to your conversational language.
 
 #### 🚀 Overcoming "Scraping Imbalance"
 If a model claims "no relevant results found" even when citations are visible:
