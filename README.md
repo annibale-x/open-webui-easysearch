@@ -42,10 +42,10 @@ You and the Assistant just had a long debate about renewable energy. You want so
 * **You type:** `??` (Just the trigger prefix, nothing else).
 * **What happens:** EasySearch reads the recent conversation history, understands the context, automatically formulates the perfect query (e.g., "solar panel efficiency statistics 2026"), and fetches the sources. 
 
-#### 3. The "Polyglot Researcher"
+#### 3. The "Polyglot Researcher" (Dual-Language)
 You are chatting in Italian, but you need reliable technical documentation that is mostly written in English.
-* **You type:** `??:en pianificazione prossime missioni lunari`
-* **What happens:** The `:en` modifier forces the LLM to generate English search queries and strictly fetch English websites, while the system automatically ensures the response remains in your conversational language (Italian).
+* **You type:** `??:en>it pianificazione prossime missioni lunari`
+* **What happens:** The `:en>it` modifier tells EasySearch to generate English queries and fetch English websites, while strictly forcing the LLM to synthesize the final answer back into Italian.
 
 #### 4. The "Deep Dive Report"
 You need a comprehensive analysis, not just a quick answer.
