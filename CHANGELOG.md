@@ -1,3 +1,8 @@
+* 2026-02-28: v0.2.9 - Multi-Language Synthesis & Smart Defaults (Hannibal)
+  * Implemented dual-language syntax `??:src>dest` for decoupled search/response.
+  * Added Smart Default logic: responses follow user prompt language unless overridden.
+  * Refactored `_parse_trigger` to handle complex language tokens.
+
 * 2026-02-28: v0.2.8 - Anti-Bleed Injection (Hannibal)
   * Implementation of the "Anti-Bleed" system. The model now strictly adheres to the language of your query or the explicit `:lang` modifier
   * The LLM is now strictly forbidden from generating bibliographies, source lists, or URL repetitions at the end of the response
