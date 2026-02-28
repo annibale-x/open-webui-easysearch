@@ -1,3 +1,11 @@
+* 2026-02-28: v0.2.5 - Full Logic Consolidation (Hannibal)
+  * Consolidated multi-modifier parsing logic (e.g., ??:en:10).
+  * Expanded User-Agent rotation to 20 unique strings for better stealth.
+  * Fixed pluralization in status messages (singular/plural 'page').
+  * Implemented strict lxml requirement with explicit UI error reporting.
+  * Verified and secured system prompt preservation during search cycles.
+  * Mapped search language and query data into the unified model for enhanced debugging.
+
 * 2026-02-28: v0.2.4 - Multi-Modifier Syntax & Context Preservation (Hannibal)  
   * Added support for colon-separated modifiers in triggers (e.g., `??:en:10`, `??:10:it`).
   * Implemented System Prompt preservation to maintain model personality during search.
