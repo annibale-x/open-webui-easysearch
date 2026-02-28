@@ -1,3 +1,7 @@
+* 2026-02-28: v0.2.8 - Anti-Bleed Injection (Hannibal)
+  * Implementation of the "Anti-Bleed" system. The model now strictly adheres to the language of your query or the explicit `:lang` modifier
+  * The LLM is now strictly forbidden from generating bibliographies, source lists, or URL repetitions at the end of the response
+
 * 2026-02-28: v0.2.7 - Anti-Bleed Injection (Hannibal)
   * Implemented "Anti-Bleed" system instruction: Added a critical directive to the final prompt that forces the LLM to respond in the exact same language as the user's search query, preventing linguistic drift caused by foreign-language search results.
 
