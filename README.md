@@ -36,7 +36,7 @@ You and the Assistant just had a long debate about renewable energy. You want so
 
 #### 3. The "Polyglot Researcher"
 You are chatting in Italian, but you need reliable technical documentation that is mostly written in English.
-* **You type:** `??:en python fastapi asynchronous routing`
+* **You type:** `??:en pianificazione prossime missioni lunari`
 * **What happens:** The `:en` modifier forces the LLM to generate English search queries and strictly fetch English websites, seamlessly integrating the foreign data into your Italian conversation.
 
 #### 4. The "Deep Dive Report"
