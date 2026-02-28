@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.9
+version: 0.3.0
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -533,6 +533,7 @@ class WebSearchHandler:
     async def _process_results(self, results: Any, target_count: int) -> Optional[str]:
         """
         Parses results, fetches raw HTML in parallel with a fallback mechanism (Gap-Filler).
+        Injects snippets from the entire oversampling pool for maximum signal.
         """
 
         if not isinstance(results, dict) or "items" not in results:
@@ -557,7 +558,6 @@ class WebSearchHandler:
 
             if sanitized_url not in seen_urls:
                 seen_urls.add(sanitized_url)
-                # Store the sanitized URL in the item for consistency during fetching
                 item["sanitized_link"] = sanitized_url
                 unique_items.append(item)
 
@@ -578,12 +578,9 @@ class WebSearchHandler:
 
         # --- ROUND 2: GAP FILLER (Controlled by auto_recovery_fetch) ---
         success_count = len([v for v in fetched_html_map.values() if v])
-
-        # Use the unified and renamed config key
         enable_gap = getattr(self.cfg, "auto_recovery_fetch", True)
 
         if enable_gap and success_count < target_count and remaining_pool:
-
             gap_size = target_count - success_count
 
             if self.debug:
@@ -595,12 +592,14 @@ class WebSearchHandler:
             await self.em.emit_status(msg, False)
 
             backup_candidates = remaining_pool[:gap_size]
+            remaining_pool = remaining_pool[
+                gap_size:
+            ]  # Update pool to avoid duplicates
+
             backup_urls = [item.get("link") for item in backup_candidates]
-
             backup_html_map = await self._fetch_concurrently(backup_urls)
-            fetched_html_map.update(backup_html_map)
 
-            # Combine candidates for final processing
+            fetched_html_map.update(backup_html_map)
             candidates.extend(backup_candidates)
 
         # --- FINAL CONTEXT CONSTRUCTION ---
@@ -614,16 +613,21 @@ class WebSearchHandler:
 
         source_id = 1
 
+        # Process Candidates (Scraped Content + Snippet Fallback)
         for item in candidates:
             url = item.get("link", "")
+            snippet = item.get("snippet", "")
+            raw_html = fetched_html_map.get(url)
+            text = ""
 
-            if url not in fetched_html_map or not fetched_html_map[url]:
-                continue
+            if raw_html:
+                text = await self._clean_with_lxml(raw_html)
 
-            text = await self._clean_with_lxml(fetched_html_map[url])
-
-            if not text:
-                continue
+            # HEURISTIC: Use snippet if scraping resulted in low-quality/empty content
+            if not text or len(text) < len(snippet):
+                text = (
+                    f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
+                )
 
             # Cleaning Pipeline
             text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -635,16 +639,21 @@ class WebSearchHandler:
 
             for line in lines:
                 line = line.strip()
+
                 if not line:
                     continue
+
                 if noise_pattern.match(line):
                     continue
+
                 if len(line) < 5 and not any(c.isalnum() for c in line):
                     continue
+
                 if len(line) < 20 and re.match(
                     r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\w{3} \d{1,2},? \d{4}", line
                 ):
                     continue
+
                 if line == prev_line:
                     continue
 
@@ -659,7 +668,10 @@ class WebSearchHandler:
                 text = text[:max_len] + "... [TRUNCATED]"
 
             context_parts.append(
-                f"--- Source {source_id}: {item.get('title', 'Source')} ---\nURL: {url}\nContent:\n{text[:max_len]}\n"
+                f"--- Source {source_id}: {item.get('title', 'Source')} ---\n"
+                f"URL: {url}\n"
+                f"Summary (Snippet): {snippet}\n"
+                f"Full Content:\n{text}\n"
             )
 
             await self.em.emit_citation(
@@ -667,6 +679,20 @@ class WebSearchHandler:
             )
 
             source_id += 1
+
+        # Process remaining_pool (Snippet-Only Injection for massive signal)
+        if remaining_pool:
+            context_parts.append(
+                "\n--- ADDITIONAL CONTEXTUAL SNIPPETS (UNREAD PAGES) ---"
+            )
+
+            for item in remaining_pool:
+                context_parts.append(
+                    f"Source {source_id} (Snippet Only): {item.get('title')}\n"
+                    f"URL: {item.get('link')}\n"
+                    f"Content: {item.get('snippet')}\n"
+                )
+                source_id += 1
 
         return "\n".join(context_parts)
 
@@ -1081,8 +1107,10 @@ class Filter:
 
                 instr = (
                     f"Search Query: {self.ctx.model.user_query}\n\n"
-                    f"INSTRUCTION: Answer the query above using ONLY the provided search results.\n"
+                    f"INSTRUCTION: Answer the query above using the provided search results.\n"
                     f"CRITICAL: {lang_instruction} Do not be influenced by the language of the search results.\n"
+                    f"RELIABILITY: If 'Full Content' is missing, irrelevant, or contains only menus, "
+                    f"you MUST prioritize the 'Summary (Snippet)' as it contains the highly-relevant search anchor.\n"
                     f"CITATIONS: Use ONLY inline [1], [2] markers within the text. "
                     f"NEVER provide a list of sources, a bibliography, or any URLs at the end of your response. "
                     f"The user interface will automatically handle the source mapping, so DO NOT repeat it.\n\n"
