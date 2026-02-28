@@ -1,3 +1,6 @@
+* 2026-02-28: v0.2.7 - Anti-Bleed Injection (Hannibal)
+  * Implemented "Anti-Bleed" system instruction: Added a critical directive to the final prompt that forces the LLM to respond in the exact same language as the user's search query, preventing linguistic drift caused by foreign-language search results.
+
 * 2026-02-28: v0.2.6 - Deep Context & RAG Lockdown (Hannibal)
   * Implemented colon-separated modifiers for context window depth (e.g., `??:c3`).
   * Added `default_context_count` User Valve to define default lookback for empty triggers.
