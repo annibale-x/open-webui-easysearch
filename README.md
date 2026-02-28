@@ -125,5 +125,4 @@ EasySearch relies on high-performance C-bindings for its structural HTML cleanin
 
 If you experience anomalies, unexpected crashes, or have ideas for new modifiers and features, community feedback is highly appreciated. 
 
-**Found a bug or want to suggest an improvement?** Please open an issue on the 
-[official GitHub repository](https://github.com/annibale-x/open-webui-easysearch/issues).
+**Found a bug or want to suggest an improvement?** Please open an issue on the [GitHub repository](https://github.com/annibale-x/open-webui-easysearch/issues).
