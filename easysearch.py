@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.5
+version: 0.2.6
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -160,6 +160,7 @@ class ConfigService:
                 "search_language": None,  # Tracked for debug
                 "executed": False,
                 "web_search_original": False,
+                "retrieval_original": False,
             }
         )
 
@@ -843,6 +844,12 @@ class Filter:
             default=False,
             description="If enabled, performs a second search round to replace failed or empty pages.",
         )
+        default_context_count: int = Field(
+            default=1,
+            ge=1,
+            le=10,
+            description="Default number of previous messages to use as context for '??' trigger.",
+        )
         debug: bool = Field(default=False)
 
     def __init__(self):
@@ -852,7 +859,7 @@ class Filter:
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """
         Parse input for trigger using ONLY user-defined prefix and colon-separated modifiers.
-        Syntax: '??', '??:7', '??:en', '??:en:10', '??:10:en'.
+        Syntax: '??', '??:7', '??:en', '??:c3', '??:en:10:c2'.
         """
 
         prefix = self.user_valves.search_prefix
@@ -860,12 +867,10 @@ class Filter:
         if not txt.startswith(prefix):
             return None
 
-        # Split trigger part from query part
         parts = txt.split(" ", 1)
         trigger_part = parts[0]
         content = parts[1].strip() if len(parts) > 1 else ""
 
-        # Extract tokens from trigger (e.g., ??:en:10 -> ['en', '10'])
         tokens = trigger_part[len(prefix) :].split(":")
         tokens = [t for t in tokens if t]
 
@@ -874,10 +879,13 @@ class Filter:
             self.valves.max_search_queries * self.valves.search_results_per_query
         )
         lang = None
+        context_count = self.user_valves.default_context_count
 
         for token in tokens:
             if token.isdigit():
                 target_count = int(token)
+            elif token.startswith("c") and token[1:].isdigit():
+                context_count = int(token[1:])
             elif len(token) == 2 and token.isalpha():
                 lang = token.lower()
 
@@ -886,6 +894,7 @@ class Filter:
             "content": content,
             "target_count": target_count,
             "lang": lang,
+            "context_count": context_count,
         }
 
     async def _extract_query_from_context(
@@ -979,6 +988,9 @@ class Filter:
         self.ctx.model.web_search_original = body.get("features", {}).get(
             "web_search", False
         )
+        self.ctx.model.retrieval_original = body.get("features", {}).get(
+            "retrieval", False
+        )
         content = parsed["content"]
 
         # Override default count if specified in trigger
@@ -986,24 +998,38 @@ class Filter:
 
         # Phase 4: Context Resolution (Empty Trigger '??')
         if not content and len(msg_list) > 1:
-            # Get the previous message (usually Assistant's output)
-            prev_content = msg_list[-2].get("content", "")
-            context_text = (
-                prev_content[0].get("text", "")
-                if isinstance(prev_content, list)
-                else str(prev_content)
+            # Get the previous messages based on context_count modifier or default
+            c_count = parsed.get("context_count", 1)
+            context_window = (
+                msg_list[-(c_count + 1) : -1]
+                if len(msg_list) > c_count
+                else msg_list[:-1]
             )
 
+            context_text = ""
+
+            for m in context_window:
+                role = m.get("role", "user")
+                c = m.get("content", "")
+                text = c[0].get("text", "") if isinstance(c, list) else str(c)
+                context_text += f"{role.upper()}: {text}\n"
+
             self.debug.log(
-                f"Empty trigger detected. Using context: {context_text[:50]}..."
+                f"Empty trigger detected. Analyzing context window ({len(context_window)} msgs)"
             )
-            await self.em.emit_status("Extracting query from context", False)
+
+            # ⚠️ SURGICAL FIX: Improved status message with context depth
+            status_msg = f"Extracting query from last {len(context_window)} {'msg' if len(context_window) == 1 else 'msgs'}"
+            await self.em.emit_status(status_msg, False)
 
             # Generate query from context
             content = await self._extract_query_from_context(
                 context_text, body.get("model"), __user__["id"]
             )
+
             self.debug.log(f"Extracted Query: {content}")
+
+            # Update status to show the search is starting
             await self.em.emit_status(f"Searching {target_count} pages", False)
 
         self.ctx.model.user_query = content
@@ -1028,6 +1054,7 @@ class Filter:
                     body["features"] = {}
 
                 body["features"]["web_search"] = False
+                body["features"]["retrieval"] = False
 
                 # Construct System Instruction
                 instr = (
@@ -1068,6 +1095,7 @@ class Filter:
                 # Restore original web search feature state
                 if "features" in body:
                     body["features"]["web_search"] = self.ctx.model.web_search_original
+                    body["features"]["retrieval"] = self.ctx.model.retrieval_original
 
                 # Handle Output & Debug
                 if "messages" in body and len(body["messages"]) > 0:
