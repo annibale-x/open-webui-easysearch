@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.7
+version: 0.2.8
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -1057,11 +1057,19 @@ class Filter:
                 body["features"]["retrieval"] = False
 
                 # Construct System Instruction
+                target_lang = parsed.get("lang")
+                lang_instruction = (
+                    f"You MUST write your response in the EXACT SAME LANGUAGE as the search query."
+                    if not target_lang
+                    else f"You MUST write your response EXCLUSIVELY in the following language: {target_lang.upper()}."
+                )
                 instr = (
                     f"Search Query: {self.ctx.model.user_query}\n\n"
                     f"INSTRUCTION: Answer the query above using ONLY the provided search results.\n"
-                    f"CRITICAL: You MUST write your response in the EXACT SAME LANGUAGE used in the 'Search Query' above. Do not use the language of the search results or system prompts.\n"
-                    f"Always cite sources using [1], [2] format.\n\n"
+                    f"CRITICAL: {lang_instruction} Do not be influenced by the language of the search results.\n"
+                    f"CITATIONS: Use ONLY inline [1], [2] markers within the text. "
+                    f"NEVER provide a list of sources, a bibliography, or any URLs at the end of your response. "
+                    f"The user interface will automatically handle the source mapping, so DO NOT repeat it.\n\n"
                     f"--- SEARCH RESULTS ---\n{search_context}"
                 )
 
