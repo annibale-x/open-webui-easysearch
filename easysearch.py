@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.2.1
+version: 0.2.2
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -14,6 +14,7 @@ import re
 import time
 import sys
 import datetime
+import random
 import asyncio
 from typing import Optional, Any, List, Dict, Tuple, Union
 from pydantic import BaseModel, Field
@@ -76,6 +77,13 @@ Constraint: Output ONLY the query string. Do not explain.
 Text: {TEXT}
 """
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
+]
 
 # --- CORE CLASSES ---
 
@@ -126,6 +134,7 @@ class ConfigService:
                 "max_total_results": self.valves.max_total_results,
                 "max_download_bytes": self.valves.max_download_mb * 1024 * 1024,
                 "max_result_length": self.valves.max_result_length,
+                "search_timeout": self.valves.search_timeout,
                 "debug": self.valves.debug or self.user_valves.debug,
                 "oversampling_factor": self.valves.oversampling_factor,
                 # --- Renamed for clarity in the model ---
@@ -374,29 +383,35 @@ class WebSearchHandler:
 
     async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
         """
-        Fetches multiple URLs in parallel using HTTPX with streaming and size limit.
+        Fetches multiple URLs in parallel using HTTPX with streaming, size limit and UA rotation.
         """
+
         if not HTTPX_AVAILABLE or not urls:
             return {}
 
         results = {}
         verify_ssl = os.environ.get("REQUESTS_CA_BUNDLE", True)
+
         if verify_ssl == "":
             verify_ssl = True
 
-        # Use configured limit from unified model
+        # Use configured limits from unified model
         max_bytes = self.cfg.max_download_bytes
-        self.log(f"Fetching {len(urls)} URLs with limit {max_bytes} bytes/page")
+        req_timeout = float(self.cfg.search_timeout)
 
-        timeout = httpx.Timeout(8.0, connect=5.0)
+        self.log(
+            f"Fetching {len(urls)} URLs. Limit: {max_bytes} bytes, Timeout: {req_timeout}s"
+        )
+
+        timeout = httpx.Timeout(req_timeout, connect=5.0)
         limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
 
         async def fetch_single(client, url):
             try:
-                req = client.build_request("GET", url)
+                # Rotate User-Agent for each request to minimize blocking
+                headers = {"User-Agent": random.choice(USER_AGENTS)}
+
+                req = client.build_request("GET", url, headers=headers)
                 response = await client.send(req, stream=True)
 
                 if response.status_code != 200:
@@ -404,8 +419,10 @@ class WebSearchHandler:
                     return None
 
                 body = b""
+
                 async for chunk in response.aiter_bytes():
                     body += chunk
+
                     if len(body) > max_bytes:
                         # Cut connection immediately to save bandwidth/RAM
                         await response.aclose()
@@ -418,24 +435,25 @@ class WebSearchHandler:
                 return body.decode(encoding, errors="replace")
 
             except Exception as e:
+
                 if self.debug:
                     self.debug.log(f"Fetch failed for {url}: {e}")
                 return None
 
         try:
+
             async with httpx.AsyncClient(
                 timeout=timeout,
                 limits=limits,
-                headers=headers,
                 follow_redirects=True,
                 verify=verify_ssl,
                 trust_env=True,
             ) as client:
-
                 tasks = [fetch_single(client, url) for url in urls]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for url, content in zip(urls, responses):
+
                     if isinstance(content, str):
                         results[url] = content
 
@@ -744,6 +762,12 @@ class Filter:
             default=4000,
             ge=500,
             description="Max characters per search result context.",
+        )
+        search_timeout: int = Field(
+            default=8,
+            ge=1,
+            le=30,
+            description="Timeout in seconds for web requests.",
         )
         oversampling_factor: int = Field(
             default=2,
