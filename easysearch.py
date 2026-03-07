@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.3.1
+version: 0.3.2
 author: Hannibal
 repository: https://github.com/annibale-x/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -8,22 +8,21 @@ author_url: https://openwebui.com/u/h4nn1b4l
 description: High-performance Web Search filter. Triggers: '?? <query>' or '??' (context-aware).
 """
 
-import os
-import json
-import re
-import time
-import sys
-import datetime
-import random
 import asyncio
-from typing import Optional, Any, List, Dict, Tuple, Union
-from pydantic import BaseModel, Field
+import datetime
+import json
+import os
+import random
+import re
+import sys
+import time
+from typing import Any, Dict, List, Optional
 
 # Open WebUI Imports
-from open_webui.main import app  # type: ignore
-from open_webui.models.users import Users, UserModel  # type: ignore
-from open_webui.utils.chat import generate_chat_completion  # type: ignore
+from open_webui.models.users import Users  # type: ignore
 from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
+from open_webui.utils.chat import generate_chat_completion  # type: ignore
+from pydantic import BaseModel, Field
 
 # Optional Dependencies for Turbo Loader
 try:
@@ -381,7 +380,7 @@ class WebSearchHandler:
         without breaking dynamic routing.
         """
 
-        from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
         try:
             parsed = urlparse(url)
@@ -468,13 +467,11 @@ class WebSearchHandler:
                 return body.decode(encoding, errors="replace")
 
             except Exception as e:
-
                 if self.debug:
                     self.debug.log(f"Fetch failed for {url}: {e}")
                 return None
 
         try:
-
             async with httpx.AsyncClient(
                 timeout=timeout,
                 limits=limits,
@@ -486,7 +483,6 @@ class WebSearchHandler:
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for url, content in zip(urls, responses):
-
                     if isinstance(content, str):
                         results[url] = content
 
@@ -818,7 +814,9 @@ class DebugService:
         if not is_debug:
             return
         print(
-            f"{'—'*60}\n📦 {APP_NAME} {label}:\n{json.dumps(data, indent=2, default=lambda o: str(o))}\n{'—'*60}",
+            f"{'—' * 60}\n📦 {APP_NAME} {label}:\n"
+            f"{json.dumps(data, indent=2, default=lambda o: str(o))}\n"
+            f"{'—' * 60}",
             file=sys.stderr,
             flush=True,
         )
@@ -953,7 +951,6 @@ class Filter:
         context_count = self.user_valves.default_context_count
 
         for token in tokens:
-
             if token.isdigit():
                 target_count = int(token)
 
@@ -971,8 +968,6 @@ class Filter:
 
             elif len(token) == 2 and token.isalpha():
                 search_lang = token.lower()
-                # ⚠️ SURGICAL FIX: Se viene fornita una sola lingua,
-                # forza anche la lingua di risposta ad essere identica.
                 response_lang = token.lower()
 
         return {
@@ -1053,9 +1048,22 @@ class Filter:
 
         # Phase 2: Initialization
         self.ctx = ConfigService(self)
-        self.debug, self.em = DebugService(self), EmitterService(
-            __event_emitter__, self
+        self.debug, self.em = (
+            DebugService(self),
+            EmitterService(__event_emitter__, self),
         )
+
+        # ⚠️ FIX: Deterministic check for Open WebUI global Web Search toggle
+        app = getattr(self.request, "app", None)
+        state = getattr(app, "state", None)
+
+        if state and hasattr(state, "config"):
+            is_enabled = getattr(state.config, "ENABLE_WEB_SEARCH", True)
+
+            if not is_enabled:
+                err_msg = "Global Web Search is OFF. Please enable it in Admin Panel -> Settings -> Web Search."
+                await self.debug.error(err_msg)
+                raise Exception(err_msg)
 
         # Update model with parsed triggers
         self.ctx.model.user_query = parsed["content"]
@@ -1151,7 +1159,6 @@ class Filter:
             )
 
             if search_context:
-
                 if "features" not in body:
                     body["features"] = {}
 
@@ -1206,7 +1213,10 @@ class Filter:
         return body
 
     async def outlet(
-        self, body: dict, __user__: dict = None, __event_emitter__=None  # type: ignore
+        self,
+        body: dict,
+        __user__: dict = None,
+        __event_emitter__=None,  # type: ignore
     ) -> dict:
         """Process the outgoing response and restore web search state."""
         try:
