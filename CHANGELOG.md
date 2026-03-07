@@ -1,8 +1,14 @@
-* 2026-03-07: v0.3.2 - Early Exit & Syntax Fix (Hannibal)
+* 2026-03-07: v0.3.3 - Documentation & Clarity (Hannibal)  
+
+  * Added explicit clarification in README.md regarding the requirement of the global Web Search engine in the Admin Panel for initial result fetching.
+
+* 2026-03-07: v0.3.2 - Early Exit & Syntax Fix (Hannibal)  
+
   * Moved the Global Web Search check from `_execute_search` to `inlet` (Phase 2) to fail early and save processing time if the feature is disabled.
+
   * Fixed an `unterminated string literal` syntax error in `DebugService.dump` caused by unsupported multiline f-strings in older Python versions.
 
-* 2026-02-28: v0.3.1 - Linguistic Precision & Binary Scrubber (Hannibal)
+* 2026-02-28: v0.3.1 - Linguistic Precision & Binary Scrubber (Hannibal)  
   * Fixed an issue where context-aware queries (`??`) would lose the original conversation language by implementing a strict `Language Anchor` using `msg_list[-2]`.
   * Fixed a bug in `_parse_trigger` that caused single-language modifiers (e.g., `??:de`) to ignore the `response_lang` constraint.
   * Introduced a Pre-Fetch Blacklist in `_process_results` to safely skip `.pdf`, `.docx`, `.zip` and other non-HTML binaries before establishing an HTTP connection.
