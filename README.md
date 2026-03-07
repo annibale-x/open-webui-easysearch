@@ -1,4 +1,4 @@
-## 🌐 EasySearch v0.3.2: High-Performance Web Search Filter
+## 🌐 EasySearch v0.3.3: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
@@ -8,7 +8,8 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.3.2
+### 🆕 What's New in v0.3.3
+- **Documentation Update**: Added explicit clarification regarding the requirement of the global Web Search engine in the Admin Panel for initial result fetching.
 - **Fail-Fast Global Check**: Added immediate validation of Open WebUI's global Web Search toggle at startup to prevent unnecessary LLM processing if disabled.
 - **Fixed Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
 - **Linguistic Precision:** Improved "Smart Default" logic with a dedicated Language Anchor. Separating the search intent from the conversational language is now more accurate.
@@ -77,14 +78,20 @@ The default trigger is `??`. You can type the trigger alone or follow it with a 
 
 EasySearch is highly customizable. Administrators can set global safety limits, while users can tweak their personal experience.
 
-#### User Valves (Personal Preferences)
+> ℹ️ **Note on Global Configuration**
+> Even though EasySearch handles scraping independently, it still requires the global **Web Search** engine to be enabled in the **Admin Panel** to fetch the initial list of results.
+)
+
+**User Valves (Personal Preferences)**
+
 | Valve | Default | Description |
 | :--- | :---: | :--- |
 | **Search Prefix** | `??` | Your personal trigger. You can change this to `search:` or `/w` if you prefer. |
 | **Default Context Count** | `1` | The default number of previous chat messages to analyze when you use the empty `??` trigger without a `:cN` modifier. |
 | **Auto Recovery Fetch** | `False` | Enables the "Gap-Filler". If a site blocks the scraper, the filter will automatically try to fetch backup links to ensure you get the requested number of pages. |
 
-#### Admin Valves (System Limits & Tuning)
+**Admin Valves (System Limits & Tuning)**
+
 | Valve | Default | Description |
 | :--- | :---: | :--- |
 | **Max Search Queries** | `3` | How many different search variations the LLM should generate from the user's prompt to ensure broad coverage. |
