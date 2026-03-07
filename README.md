@@ -64,7 +64,7 @@ The default trigger is `??`. You can type the trigger alone or follow it with a 
 | `??` | **Context Search**: Auto-generates a query based on the chat history. Response matches the chat language. | `??` |
 | `??:<count>` | **Result Modifier**: Forces the system to read exactly `N` pages. | `??:10 quantum computing` |
 | `??:<lang>` | **Full Language Lock**: Forces the search, the results, AND the model response to be in the specified language. | `??:de` (Search DE, Answer DE) |
-| `??:<src>><dest>`| **Dual-Language Modifier**: Decouples the search language from the response language. | `??:en>it quantum computing` |
+| `??:<src>><dest>`| **Dual-Language Modifier**: Decouples the search language from the response language. | `??:en>it quantum computing`  (Search EN, Answer IT)|
 | `??:c<count>` | **Context Modifier**: Tells the system how many previous messages to read when generating an automatic query. | `??:c3` (reads last 3 messages) |
 | **Combined** | Modifiers can be stacked effortlessly. | `??:15:fr:c2 latest news` |
 
