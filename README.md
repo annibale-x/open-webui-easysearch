@@ -1,4 +1,4 @@
-## 🌐 EasySearch v0.3.1: High-Performance Web Search Filter
+## 🌐 EasySearch v0.3.2: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
@@ -8,8 +8,8 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.3.1
-
+### 🆕 What's New in v0.3.2
+- **Fail-Fast Global Check**: Added immediate validation of Open WebUI's global Web Search toggle at startup to prevent unnecessary LLM processing if disabled.
 - **Fixed Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
 - **Linguistic Precision:** Improved "Smart Default" logic with a dedicated Language Anchor. Separating the search intent from the conversational language is now more accurate.
 - **Binary Scrubber:** Upgraded text cleaning engine that automatically detects and skips binary files (.pdf, .docx, .zip) and annihilates Unicode junk characters from dirty web sources.
