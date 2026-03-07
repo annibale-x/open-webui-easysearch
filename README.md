@@ -80,7 +80,6 @@ EasySearch is highly customizable. Administrators can set global safety limits, 
 
 > ℹ️ **Note on Global Configuration**
 > Even though EasySearch handles scraping independently, it still requires the global **Web Search** engine to be enabled in the **Admin Panel** to fetch the initial list of results.
-)
 
 **User Valves (Personal Preferences)**
 
