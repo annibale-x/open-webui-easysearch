@@ -1,4 +1,4 @@
-## 🌐 EasySearch v0.3.3: High-Performance Web Search Filter
+## 🌐 EasySearch v0.3.4: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
@@ -8,8 +8,8 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.3.3
-- **Documentation Update**: Added explicit clarification regarding the requirement of the global Web Search engine in the Admin Panel for initial result fetching.
+### 🆕 What's New in v0.3.4
+- **Documentation Update**: Added **Troubleshooting & FAQ** section.
 - **Fail-Fast Global Check**: Added immediate validation of Open WebUI's global Web Search toggle at startup to prevent unnecessary LLM processing if disabled.
 - **Fixed Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
 - **Linguistic Precision:** Improved "Smart Default" logic with a dedicated Language Anchor. Separating the search intent from the conversational language is now more accurate.
@@ -155,7 +155,7 @@ EasySearch isn't just a scraper; it's a "cleaner."
 
 ---
 
-### ‼️ Requirements & Troubleshooting
+### ‼️ Requirements
 
 EasySearch relies on high-performance C-bindings for its structural HTML cleaning.
 * **Requirement:** The `lxml` Python library must be installed in your environment.
@@ -164,8 +164,42 @@ EasySearch relies on high-performance C-bindings for its structural HTML cleanin
 
 ---
 
+### ❓ Troubleshooting & FAQ
+
+If EasySearch is not behaving as expected, please follow this guide based on the internal filter logic.
+
+#### 1. The `??` command produces no status messages
+If the LLM responds normally without showing "EasySearch" status updates (e.g., *Searching...* or *Reading pages...*), the filter was not triggered.
+* **Filter Activation:** Make sure the "EasySearch" filter is globally enabled or at least enabled for the model currently in use.
+* **Syntax Check:** The trigger must be at the very beginning of the message and must be followed by a space if a query is provided.
+    * ✅ **Correct:** `?? weather in Rome`
+    * ❌ **Incorrect:** `Hey, ?? weather...` or `??weather...` (missing space).
+
+#### 2. Error: "Global Web Search is OFF"
+EasySearch performs a deterministic check at startup to ensure the environment is ready. If you see this error:
+* `❌ The global Web Search "Master Switch" in the Open WebUI Admin settings is disabled.`
+* **Solution:** Navigate to `Admin Panel -> Settings -> Web Search`, turn the main **Web Search** toggle **ON**, and click **Save**. EasySearch requires the base engine (SearXNG, Google PSE, etc.) to fetch the initial list of results before it can perform its deep-cleaning and fetching.
+
+#### 3. The model responds in the wrong language
+EasySearch implements a **Language Anchor** system to prevent "language drifting" caused by foreign search results.
+* **Behavior:** When using an empty trigger (`??`), the filter automatically anchors the response to the language used in your last message (`msg_list[-2]`).
+* **Solution:** If the model still gets confused by foreign content, use the explicit dual-modifier (e.g., `??:en>it`) to strictly separate the search engine language from the final synthesis language.
+
+#### 4. Message: "No results found"
+* **Cause:** Your configured search engine in OWUI returned no valid links, or all discovered links were binary files (PDF, DOCX, ZIP) which are automatically discarded by the Binary Scrubber for security and token efficiency.
+* **Tip:** Verify that your search engine (e.g., SearXNG or Firecrawl) is functional outside of EasySearch. If sites are blocking the scraper, increase the result count (e.g., `??:15`) to force the injection of **Search Snippets** as a fallback.
+
+#### 5. How to provide logs for bug reports
+If you encounter a persistent issue, please enable the **Debug** valve in the EasySearch function settings.
+* Run the search again to capture the error details.
+* **Admins:** Check your Docker container logs for lines starting with `⚡ EasySearch DEBUG:`.
+* **Users:** Expand the **🔍 EasySearch Debug** dropdown at the bottom of the LLM's response and copy the JSON payload.
+* [Open an issue on GitHub](https://github.com/annibale-x/open-webui-easysearch/issues) and attach these logs along with your Open WebUI version.
+
+---
+
 ### 🐞 Bug Reports & Feedback
 
 If you experience anomalies, unexpected crashes, or have ideas for new modifiers and features, community feedback is highly appreciated. 
 
-**Found a bug or want to suggest an improvement?** Please open an issue on the [GitHub repository](https://github.com/annibale-x/open-webui-easysearch/issues).
+**Found a bug or want to suggest an improvement?** Please [open an issue on GitHub](https://github.com/annibale-x/open-webui-easysearch/issues).

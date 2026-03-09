@@ -1,3 +1,10 @@
+* 2026-03-09: v0.3.4 - Documentation & Logic Improvements (Hannibal)  
+  * Added **Troubleshooting & FAQ** section to README.md.
+  * Added immediate validation of Open WebUI's global Web Search toggle at startup.
+  * Improved "Smart Default" logic with a dedicated Language Anchor.
+  * Upgraded text cleaning engine to automatically skip binary files (.pdf, .docx, .zip) and remove Unicode junk characters.
+  * All retrieved search snippets from unread pages are now fed directly to the LLM for better signal density.
+
 * 2026-03-07: v0.3.3 - Documentation & Clarity (Hannibal)  
 
   * Added explicit clarification in README.md regarding the requirement of the global Web Search engine in the Admin Panel for initial result fetching.
