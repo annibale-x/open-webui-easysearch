@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.4.0
+version: 0.4.2
 author: Hannibal
 repository: https://github.com/x-hannibal/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -10,6 +10,7 @@ description: High-performance Web Search filter. Triggers: '?? <query>' or '??' 
 
 import asyncio
 import datetime
+import inspect
 import json
 import math
 import os
@@ -323,7 +324,7 @@ class WebSearchHandler:
             form_data = {"model": model, "messages": messages, "stream": False}
 
             response = await generate_chat_completion(
-                self.request, form_data, user=await Users.get_user_by_id(self.user_id)
+                self.request, form_data, user=await _get_user(self.user_id)
             )
 
             if isinstance(response, dict) and "choices" in response:
@@ -378,7 +379,7 @@ class WebSearchHandler:
             form_data = SearchForm(queries=queries, collection_name="")
 
             return await process_web_search(
-                shadow_req, form_data, await Users.get_user_by_id(self.user_id)
+                shadow_req, form_data, await _get_user(self.user_id)
             )
 
         except Exception as e:
@@ -978,6 +979,14 @@ _THINK_UNCLOSED_RE = re.compile(
 )
 
 
+async def _get_user(user_id: str):
+    """Resolve a user object — compatible with both sync (OWUI ≤0.8.12) and async (OWUI ≥0.9.x) APIs."""
+    result = Users.get_user_by_id(user_id)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
 def _strip_reasoning_blocks(text: str) -> str:
     """Remove <think>/<thinking> blocks emitted by reasoning models.
 
@@ -1247,7 +1256,7 @@ class Filter:
         Generates a search query based on the provided context (last message).
         """
         try:
-            user = await Users.get_user_by_id(user_id)
+            user = await _get_user(user_id)
             prompt = CONTEXT_EXTRACTION_TEMPLATE.format(TEXT=context_text[:2000])
 
             messages = [{"role": "user", "content": prompt}]

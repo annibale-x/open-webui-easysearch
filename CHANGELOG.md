@@ -1,3 +1,6 @@
+* 2026-04-23: v0.4.2 - OWUI Version Compatibility (Hannibal)
+  * **fix:** `Users.get_user_by_id()` is synchronous in OWUI ≤0.8.12 and asynchronous in OWUI ≥0.9.x. Using a bare `await` on the sync version raises `object UserModel can't be used in 'await' expression`. Replaced all three call sites with a `_get_user()` helper that uses `inspect.isawaitable()` to branch at runtime — no minimum OWUI version requirement.
+
 * 2026-04-23: v0.4.1 - Engine-Aware Result Cap (Hannibal)
   * **enh:** Raised `max_results_per_query` upper bound from 50 to 100 so admins on SerpAPI, Exa, and Serper (which allow up to 100 per request) can make full use of their engine.
   * **docs:** Valve description is now engine-agnostic and lists the actual per-engine API caps for quick reference.
