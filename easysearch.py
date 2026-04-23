@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.3.4
+version: 0.3.5
 author: Hannibal
 repository: https://github.com/x-hannibal/open-webui-easysearch
 author_email: annibale.x@gmail.com
