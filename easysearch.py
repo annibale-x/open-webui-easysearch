@@ -2,7 +2,7 @@
 title: 🌐 EasySearch
 version: 0.3.4
 author: Hannibal
-repository: https://github.com/annibale-x/open-webui-easysearch
+repository: https://github.com/x-hannibal/open-webui-easysearch
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
 description: High-performance Web Search filter. Triggers: '?? <query>' or '??' (context-aware).
@@ -152,6 +152,7 @@ class ConfigService:
                 "search_timeout": self.valves.search_timeout,
                 "debug": self.valves.debug or self.user_valves.debug,
                 "oversampling_factor": self.valves.oversampling_factor,
+                "max_results_per_query": self.valves.max_results_per_query,
                 # --- Renamed for clarity in the model ---
                 "auto_recovery_fetch": gap_filler_state,
                 # --- Runtime State ---
@@ -351,12 +352,14 @@ class WebSearchHandler:
             factor = getattr(self.cfg, "oversampling_factor", 2)
 
             # Request more results than target to compensate for duplicates/dead links
-            count_per_query = (
-                max(self.cfg.search_results_per_query, target_count) * factor
+            max_cap = getattr(self.cfg, "max_results_per_query", 20)
+            count_per_query = min(
+                max(self.cfg.search_results_per_query, target_count) * factor,
+                max_cap,
             )
 
             self.log(
-                f"Executing Shadow Request. Oversampling: {factor}x. Target Per Query: {count_per_query}"
+                f"Executing Shadow Request. Oversampling: {factor}x. Target Per Query: {count_per_query} (cap: {max_cap})"
             )
 
             overrides = {
@@ -894,6 +897,12 @@ class Filter:
             ge=1,
             le=4,
             description="Multiplier for search results to provide a buffer for deduplication/dead links.",
+        )
+        max_results_per_query: int = Field(
+            default=20,
+            ge=1,
+            le=50,
+            description="Hard cap on results requested per query to the search API. Brave Search API maximum is 20.",
         )
         auto_recovery_fetch: bool = Field(
             default=False,
