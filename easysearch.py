@@ -1509,6 +1509,13 @@ class Filter:
                 if "messages" in body and len(body["messages"]) > 0:
                     last_msg = body["messages"][-1]
                     content = last_msg.get("content", "")
+
+                    if TRACE:
+                        self.debug.dump(
+                            content if isinstance(content, str) else str(content),
+                            "MODEL RESPONSE (raw)",
+                        )
+
                     debug_out = self.debug.emit()
 
                     # Pipeline stats summary line (always shown after a search)
