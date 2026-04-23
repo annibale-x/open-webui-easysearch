@@ -113,16 +113,16 @@
 - [x] Update README "What's New" and add a bullet under Main Features
 
 #### Phase 2 — Adaptive budget (required before v0.4.0 ships)
-- [ ] Strip truncation from `_sanitize_text` — pure cleaning only; truncation moves to the adaptive phase
-- [ ] Add `rerank_with_scores(query, sources)` helper (ports mcp-webgate signature; returns `(scores, reordered_sources)`)
-- [ ] Add `redistribute_budget(sources, allocs, scores)` helper (ports mcp-webgate `_redistribute_budget`)
-- [ ] Add module constant `BM25_FLOOR_CHARS = 200`
-- [ ] Replace Phase B in `_process_results` with: `rerank_with_scores` → proportional allocation → surplus redistribution → in-place truncation
-- [ ] New admin valve `bm25_fetch_factor: int = 3` (ge=1, le=5) wired through `ConfigService`
-- [ ] Replace debug key `BM25 RERANKED ORDER` with `BM25 ADAPTIVE BUDGET` carrying per-source `score`, `init_alloc`, `final_alloc`, `actual_len`
-- [ ] Amend the existing v0.4.0 `CHANGELOG.md` entry (do NOT add a new version) to reflect adaptive budget + new valve
-- [ ] Amend the existing v0.4.0 "What's New" section in README accordingly
-- [ ] Retire or deprecate the old `rerank_by_bm25` helper (callers migrate to `rerank_with_scores`)
+- [x] Strip truncation from `_sanitize_text` — pure cleaning only; truncation moves to the adaptive phase
+- [x] Add `rerank_with_scores(query, sources)` helper (ports mcp-webgate signature; returns `(scores, reordered_sources)`)
+- [x] Add `redistribute_budget(sources, allocs, scores)` helper (ports mcp-webgate `_redistribute_budget`)
+- [x] Add module constant `BM25_FLOOR_CHARS = 200`
+- [x] Replace Phase B in `_process_results` with: `rerank_with_scores` → proportional allocation → surplus redistribution → in-place truncation
+- [x] New admin valve `bm25_fetch_factor: int = 3` (ge=1, le=5) wired through `ConfigService`
+- [x] Replace debug key `BM25 RERANKED ORDER` with `BM25 ADAPTIVE BUDGET` carrying per-source `score`, `init_alloc`, `final_alloc`, `actual_len`
+- [x] Amend the existing v0.4.0 `CHANGELOG.md` entry (do NOT add a new version) to reflect adaptive budget + new valve
+- [x] Amend the existing v0.4.0 "What's New" section in README accordingly
+- [x] Retire or deprecate the old `rerank_by_bm25` helper (callers migrate to `rerank_with_scores`)
 - [ ] Manual verification per `docs/BM25_RERANK.md` §9 — happy path + skewed scores + failed fetches + valve off + edge cases
 
 ---
@@ -141,10 +141,26 @@ Context: `max_results_per_query` ships with `le=50` and a Brave-only description
 
 ---
 
+### M15 — Tier 2 LLM-Assisted Reranking (opt-in, target post-v0.4.0)
+**Prompt:** _to be drafted — `tasks/todo/feat-bm25-llm-rerank.md`_
+**Reference implementation:** `mcp-webgate/src/mcp_webgate/utils/reranker.py` `rerank_llm`
+
+Context: BM25 is keyword-only and structurally blind to semantic matches (synonyms, paraphrase, intent). For complex natural-language queries (especially cross-language `??:en>it` scenarios), this caps relevance quality. A Tier 2 LLM pass takes the Tier 1-ranked list and reorders by semantic relevance. Mandatory guard rails below prevent it from degrading EasySearch's "fast and cheap" default.
+
+- [ ] New admin valve `enable_llm_rerank: bool = False` — **opt-in, default off**
+- [ ] New admin valve `llm_rerank_model: Optional[str] = None` — when set, rerank runs on this model (cheap/fast small model); when `None`, falls back to the user's current chat model
+- [ ] Strict timeout (hardcoded ≈5s) with silent fallback to Tier 1 order on timeout, malformed JSON, or any exception
+- [ ] Lean prompt: `title + first 200 chars of snippet/content` per source — no conversation history, no system bloat (minimizes rerank-model context pressure, critical for self-hosted small-context backends)
+- [ ] Phase ordering in `_process_results`: BM25 adaptive budget runs *before* Tier 2; Tier 2 only reorders, does not reallocate budget (allocations already computed from BM25 scores)
+- [ ] Debug emission `LLM RERANKED ORDER` with per-source id/url when `valves.debug: true`
+- [ ] README documentation under "Advanced Pro-Tips" with explicit latency/cost warning
+- [ ] Manual verification: semantic-match query (e.g. query in language A, sources in language B) shows Tier 2 improving order vs Tier 1 alone
+
+---
+
 ## Backlog (not scheduled)
 
 Candidate follow-ups evaluated but explicitly deferred:
 
-- **Tier 2 LLM-assisted reranking** — opt-in LLM relevance pass, as in mcp-webgate (`rerank_llm`). Value: semantic reordering where keyword overlap misses synonyms. Cost: one extra LLM call per query. Decision at a later sprint.
-- **Adaptive budget** — proportional char allocation per source based on BM25 scores. EXPERIMENTAL in mcp-webgate. Requires budget redistribution machinery and surplus reclamation logic. Defer until there is a concrete case where flat allocation hurts output quality.
 - **Snippet-pool reranking** — rerank `remaining_pool` (snippet-only) entries. Low ROI because the pool is secondary signal already; revisit if users report snippet-pool order complaints.
+- **Round-robin sub-query interleaving** — replicate `mcp-webgate/tools/query.py:110-128` to avoid one sub-query dominating the candidate pool. Requires N separate `process_web_search` calls (one per sub-query) instead of OWUI's batch call — significant refactor for moderate ROI.

@@ -158,6 +158,7 @@ class ConfigService:
                 "auto_recovery_fetch": gap_filler_state,
                 # --- BM25 Reranker ---
                 "enable_bm25_rerank": self.valves.enable_bm25_rerank,
+                "bm25_fetch_factor": self.valves.bm25_fetch_factor,
                 "generated_queries": [],
                 # --- Runtime State ---
                 "user_query": "",
@@ -537,10 +538,9 @@ class WebSearchHandler:
 
     def _sanitize_text(self, text: str) -> str:
         """Full cleaning pipeline: CRLF normalization, unicode/BiDi scrubber,
-        noise-line filter, repeated-line dedup, dynamic truncation.
+        noise-line filter, repeated-line dedup, whitespace collapse.
+        Pure cleaning — no length truncation (handled by adaptive budget in Phase B).
         """
-        max_len = self.cfg.max_result_length
-
         text = text.replace("\r\n", "\n").replace("\r", "\n")
 
         # Aggressive sterilization (C0/C1 codes, \ufffd, Zero-Width/BiDi codes)
@@ -583,9 +583,6 @@ class WebSearchHandler:
 
         text = "\n".join(cleaned_lines)
         text = re.sub(r"\n{3,}", "\n\n", text)
-
-        if len(text) > max_len:
-            text = text[:max_len] + "... [TRUNCATED]"
 
         return text
 
@@ -692,7 +689,7 @@ class WebSearchHandler:
         context_parts = []
         source_id = 1
 
-        # --- PHASE A: BUILD SOURCES (clean + sanitize) ---
+        # --- PHASE A: BUILD SOURCES (clean, no truncation) ---
         sources: List[Dict[str, Any]] = []
         for item in candidates:
             url = item.get("link", "")
@@ -707,7 +704,7 @@ class WebSearchHandler:
             if not text or len(text) < len(snippet) or text.count("\ufffd") > 10:
                 text = f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
 
-            text = self._sanitize_text(text)
+            text = self._sanitize_text(text)  # cleaning only, no truncation
 
             sources.append({
                 "title": item.get("title", "Source"),
@@ -716,18 +713,61 @@ class WebSearchHandler:
                 "content": text,
             })
 
-        # --- PHASE B: BM25 RERANK (valve-gated) ---
+        # --- PHASE B: BM25 RERANK + ADAPTIVE BUDGET ---
+        max_len = self.cfg.max_result_length
+        fetch_factor = getattr(self.cfg, "bm25_fetch_factor", 3)
+        fetch_limit = max_len * fetch_factor
+
         if self.cfg.enable_bm25_rerank and len(sources) > 1:
-            rerank_query = " ".join(
-                [self.cfg.user_query] + list(self.cfg.generated_queries or [])
-            ).strip()
+            # Use only the user's original query for scoring — sub-queries are for
+            # search coverage, not for relevance judgment.
+            rerank_query = (self.cfg.user_query or "").strip()
+
             if rerank_query:
-                sources = rerank_by_bm25(rerank_query, sources)
+                scores, sources = rerank_with_scores(rerank_query, sources)
+                total_budget = max_len * len(sources)
+                total_score = sum(scores)
+
+                if total_score > 0:
+                    allocs = [
+                        max(BM25_FLOOR_CHARS, min(fetch_limit, int(s / total_score * total_budget)))
+                        for s in scores
+                    ]
+                else:
+                    allocs = [total_budget // max(1, len(sources))] * len(sources)
+
+                initial_allocs = list(allocs)
+                allocs = redistribute_budget(sources, allocs, scores)
+
+                for source, alloc in zip(sources, allocs):
+                    if len(source["content"]) > alloc:
+                        source["content"] = source["content"][:alloc] + "... [TRUNCATED]"
+
                 if self.debug:
                     self.debug.dump(
-                        [{"url": s["url"], "title": s["title"]} for s in sources],
-                        "BM25 RERANKED ORDER",
+                        [
+                            {
+                                "url": s["url"],
+                                "title": s["title"],
+                                "score": round(sc, 2),
+                                "init_alloc": ia,
+                                "final_alloc": a,
+                                "actual_len": len(s["content"]),
+                            }
+                            for s, sc, ia, a in zip(sources, scores, initial_allocs, allocs)
+                        ],
+                        "BM25 ADAPTIVE BUDGET",
                     )
+            else:
+                # Empty query — flat truncation fallback
+                for source in sources:
+                    if len(source["content"]) > max_len:
+                        source["content"] = source["content"][:max_len] + "... [TRUNCATED]"
+        else:
+            # BM25 disabled or single source — flat truncation (legacy behavior)
+            for source in sources:
+                if len(source["content"]) > max_len:
+                    source["content"] = source["content"][:max_len] + "... [TRUNCATED]"
 
         # --- PHASE C: BUILD CONTEXT IN RANKED ORDER ---
         for source in sources:
@@ -881,11 +921,12 @@ NOISE_LINE_RE = re.compile(
 )
 
 
-# --- RERANKER (Tier 1 Deterministic BM25) ---
-# Ported from mcp-webgate src/mcp_webgate/utils/reranker.py
+# --- RERANKER (Tier 1 Deterministic BM25 + Adaptive Budget) ---
+# Ported from mcp-webgate src/mcp_webgate/utils/reranker.py and tools/query.py
 
 BM25_K1 = 1.5
 BM25_B = 0.75
+BM25_FLOOR_CHARS = 200
 
 
 def _tokenize(text: str) -> List[str]:
@@ -922,26 +963,68 @@ def _bm25_scores(
     return scores
 
 
-def rerank_by_bm25(query: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Rerank sources by BM25 score. Pass-through on <= 1 source or empty query.
+def rerank_with_scores(
+    query: str,
+    sources: List[Dict[str, Any]],
+) -> "tuple[List[float], List[Dict[str, Any]]]":
+    """Rerank sources by BM25 score, returning (scores_in_ranked_order, reordered_sources).
 
-    Each source is a dict with keys: title, url, snippet, content.
-    Returns a new list; input is not mutated.
+    Pass-through on len(sources) <= 1 or empty query_tokens.
+    Uses full cleaned content (no [:3000] cap) for accurate scoring.
+    Returns new lists; input is not mutated.
     """
     if len(sources) <= 1:
-        return list(sources)
+        return ([1.0] * len(sources), list(sources))
 
     query_tokens = _tokenize(query)
     if not query_tokens:
-        return list(sources)
+        return ([1.0] * len(sources), list(sources))
 
     docs = [
-        f"{s.get('title', '')} {s.get('snippet', '')} {s.get('content', '')[:3000]}"
+        f"{s.get('title', '')} {s.get('snippet', '')} {s.get('content', '')}"
         for s in sources
     ]
-    scores = _bm25_scores(query_tokens, docs)
-    ranked = sorted(zip(scores, range(len(sources))), reverse=True)
-    return [sources[i] for _, i in ranked]
+    raw_scores = _bm25_scores(query_tokens, docs)
+    ranked = sorted(zip(raw_scores, range(len(sources))), reverse=True)
+    sorted_scores = [sc for sc, _ in ranked]
+    sorted_sources = [sources[i] for _, i in ranked]
+    return sorted_scores, sorted_sources
+
+
+def redistribute_budget(
+    sources: List[Dict[str, Any]],
+    allocs: List[int],
+    scores: List[float],
+    max_iterations: int = 5,
+) -> List[int]:
+    """Reclaim unused budget from short/failed sources and redistribute to hungry ones.
+
+    Hungry = content longer than current alloc. Donor = content shorter than alloc.
+    Redistribution is proportional to BM25 scores. Capped at max_iterations.
+    Returns updated allocations (new list; input is not mutated).
+    """
+    allocs = list(allocs)
+    for _ in range(max_iterations):
+        surplus = 0
+        hungry: List[int] = []
+        for i, (src, alloc) in enumerate(zip(sources, allocs)):
+            actual = len(src["content"])
+            if actual < alloc:
+                surplus += alloc - actual
+                allocs[i] = actual
+            elif actual > alloc:
+                hungry.append(i)
+        if surplus == 0 or not hungry:
+            break
+        hungry_score_sum = sum(scores[i] for i in hungry)
+        if hungry_score_sum <= 0:
+            share = surplus // len(hungry)
+            for i in hungry:
+                allocs[i] += share
+        else:
+            for i in hungry:
+                allocs[i] += int(scores[i] / hungry_score_sum * surplus)
+    return allocs
 
 
 class Filter:
@@ -989,6 +1072,17 @@ class Filter:
             ge=1,
             le=4,
             description="Multiplier for search results to provide a buffer for deduplication/dead links.",
+        )
+        bm25_fetch_factor: int = Field(
+            default=3,
+            ge=1,
+            le=5,
+            description=(
+                "Generous pre-allocation multiplier for BM25 adaptive budget. "
+                "Each source's content is cleaned up to max_result_length × bm25_fetch_factor chars "
+                "before BM25 redistributes the total budget proportionally to relevance. "
+                "Higher = more signal for reranking, more memory. Default 3 is balanced."
+            ),
         )
         max_results_per_query: int = Field(
             default=20,

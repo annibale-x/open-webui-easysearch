@@ -2,10 +2,13 @@
   * **enh:** Raised `max_results_per_query` upper bound from 50 to 100 so admins on SerpAPI, Exa, and Serper (which allow up to 100 per request) can make full use of their engine.
   * **docs:** Valve description is now engine-agnostic and lists the actual per-engine API caps for quick reference.
 
-* 2026-04-23: v0.4.0 - BM25 Deterministic Reranking (Hannibal)
-  * **feat:** Tier 1 BM25 reranker ported from mcp-webgate. Fetched sources are now ordered by keyword-overlap relevance before being presented to the LLM, so the most relevant pages occupy the top slots (where LLMs attend most strongly). Deterministic, zero-cost, no new dependencies.
-  * **feat:** New admin valve `enable_bm25_rerank` (default: `True`). Toggle BM25 reranking globally without restarting Open WebUI.
-  * **enh:** Text sanitization pipeline extracted into `WebSearchHandler._sanitize_text`. The noise-filter regex is now compiled once at module load (`NOISE_LINE_RE`) instead of being recompiled per source per request.
+* 2026-04-23: v0.4.0 - BM25 Reranking + Adaptive Budget (Hannibal)
+  * **feat:** BM25 relevance reranking ported from mcp-webgate. Sources are ordered by keyword-overlap relevance against the user query.
+  * **feat:** Adaptive budget allocation. The per-source char budget is now proportional to BM25 score — highly relevant pages get up to `max_result_length × bm25_fetch_factor` chars; marginal pages get truncated to a 200-char floor. Total context size is budget-neutral vs. the previous flat allocation.
+  * **feat:** Surplus redistribution. Chars unused by failed fetches or thin pages are reclaimed and redistributed to high-scoring pages whose content would otherwise be truncated.
+  * **feat:** New admin valve `enable_bm25_rerank` (default: `True`) — single toggle for the entire block (ordering + allocation).
+  * **feat:** New admin valve `bm25_fetch_factor` (default: `3`, range 1–5) — generous pre-allocation multiplier used as the per-source ceiling.
+  * **enh:** `WebSearchHandler._sanitize_text` now does cleaning only; truncation moved to the adaptive allocation phase. The noise-filter regex is compiled once at module load (`NOISE_LINE_RE`).
 
 * 2026-04-23: v0.3.5 - Bug Fixes & Security (Hannibal)
   * **fix:** Clamp `WEB_SEARCH_RESULT_COUNT` to a configurable `max_results_per_query` valve (default: 20). Brave Search API hard-rejects `count > 20` with 422 for all plans. Closes #3.
