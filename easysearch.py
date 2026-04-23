@@ -829,6 +829,10 @@ class DebugService:
         if not self.ctx.user_valves.debug:
             return ""
 
+        ctx = self.ctx.ctx
+        if not ctx:
+            return ""
+
         def _s(d):
             return {
                 k: (
@@ -847,7 +851,7 @@ class DebugService:
         return (
             f"\n\n<details>\n\n"
             f"<summary>🔍 {APP_NAME} Debug</summary>\n\n"
-            f"```json\n{json.dumps(_s(self.ctx.ctx.model), indent=2)}\n```\n\n"
+            f"```json\n{json.dumps(_s(ctx.model), indent=2)}\n```\n\n"
             f"</details>"
         )
 
@@ -1229,12 +1233,13 @@ class Filter:
         __event_emitter__=None,  # type: ignore
     ) -> dict:
         """Process the outgoing response and restore web search state."""
+        ctx = self.ctx
         try:
-            if self.ctx and self.ctx.model.executed:
+            if ctx and ctx.model.executed:
                 # Restore original web search feature state
                 if "features" in body:
-                    body["features"]["web_search"] = self.ctx.model.web_search_original
-                    body["features"]["retrieval"] = self.ctx.model.retrieval_original
+                    body["features"]["web_search"] = ctx.model.web_search_original
+                    body["features"]["retrieval"] = ctx.model.retrieval_original
 
                 # Handle Output & Debug
                 if "messages" in body and len(body["messages"]) > 0:
