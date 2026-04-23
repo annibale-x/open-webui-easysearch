@@ -237,7 +237,6 @@ class WebSearchHandler:
         self.em = emitter
         self.cfg = config  # Store unified config
         self.debug = debug_service
-        self.user_obj = Users.get_user_by_id(user_id)
 
     def log(self, msg: str, is_error: bool = False):
         if self.debug:
@@ -317,7 +316,7 @@ class WebSearchHandler:
             form_data = {"model": model, "messages": messages, "stream": False}
 
             response = await generate_chat_completion(
-                self.request, form_data, user=self.user_obj
+                self.request, form_data, user=await Users.get_user_by_id(self.user_id)
             )
 
             if isinstance(response, dict) and "choices" in response:
@@ -368,7 +367,9 @@ class WebSearchHandler:
             shadow_req = ShadowRequest(self.request, overrides=overrides)
             form_data = SearchForm(queries=queries, collection_name="")
 
-            return await process_web_search(shadow_req, form_data, self.user_obj)
+            return await process_web_search(
+                shadow_req, form_data, await Users.get_user_by_id(self.user_id)
+            )
 
         except Exception as e:
             self.log(f"Process Web Search Error: {e}", True)
@@ -986,7 +987,7 @@ class Filter:
         Generates a search query based on the provided context (last message).
         """
         try:
-            user = Users.get_user_by_id(user_id)
+            user = await Users.get_user_by_id(user_id)
             prompt = CONTEXT_EXTRACTION_TEMPLATE.format(TEXT=context_text[:2000])
 
             messages = [{"role": "user", "content": prompt}]
