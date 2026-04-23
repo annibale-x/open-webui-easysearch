@@ -158,7 +158,6 @@ class ConfigService:
                 "auto_recovery_fetch": gap_filler_state,
                 # --- BM25 Reranker ---
                 "enable_bm25_rerank": self.valves.enable_bm25_rerank,
-                "bm25_fetch_factor": self.valves.bm25_fetch_factor,
                 "generated_queries": [],
                 # --- Runtime State ---
                 "user_query": "",
@@ -715,8 +714,7 @@ class WebSearchHandler:
 
         # --- PHASE B: BM25 RERANK + ADAPTIVE BUDGET ---
         max_len = self.cfg.max_result_length
-        fetch_factor = getattr(self.cfg, "bm25_fetch_factor", 3)
-        fetch_limit = max_len * fetch_factor
+        fetch_limit = max_len * BM25_CEILING_FACTOR
 
         if self.cfg.enable_bm25_rerank and len(sources) > 1:
             # Use only the user's original query for scoring — sub-queries are for
@@ -927,6 +925,7 @@ NOISE_LINE_RE = re.compile(
 BM25_K1 = 1.5
 BM25_B = 0.75
 BM25_FLOOR_CHARS = 200
+BM25_CEILING_FACTOR = 3  # per-source alloc ceiling = max_result_length * this
 
 
 def _tokenize(text: str) -> List[str]:
@@ -1072,17 +1071,6 @@ class Filter:
             ge=1,
             le=4,
             description="Multiplier for search results to provide a buffer for deduplication/dead links.",
-        )
-        bm25_fetch_factor: int = Field(
-            default=3,
-            ge=1,
-            le=5,
-            description=(
-                "Generous pre-allocation multiplier for BM25 adaptive budget. "
-                "Each source's content is cleaned up to max_result_length × bm25_fetch_factor chars "
-                "before BM25 redistributes the total budget proportionally to relevance. "
-                "Higher = more signal for reranking, more memory. Default 3 is balanced."
-            ),
         )
         max_results_per_query: int = Field(
             default=20,
