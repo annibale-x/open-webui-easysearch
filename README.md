@@ -1,4 +1,4 @@
-## 🌐 EasySearch v0.3.5: High-Performance Web Search Filter
+## 🌐 EasySearch v0.4.0: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
@@ -8,11 +8,10 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.3.5
-- **Fix — Brave Search 422 error:** Clamp `WEB_SEARCH_RESULT_COUNT` to a configurable `max_results_per_query` valve (default: 20). The Brave Search API hard-rejects `count > 20` for all plans.
-- **Fix — Race condition crash:** Concurrent requests on the shared Filter singleton could reset internal state mid-execution, causing `'NoneType' has no attribute 'model'` errors. `outlet()` and `DebugService.emit()` now capture a safe local reference.
-- **Fix — Coroutine user object:** Missing `await` on `Users.get_user_by_id` calls was returning coroutines instead of user objects, causing `'coroutine' has no attribute 'role'`.
-- **Security — Prompt injection mitigation:** Raw web content is now wrapped in `<search_results>` XML tags with an explicit untrusted-data instruction to reduce indirect prompt injection risk from malicious pages.
+### 🆕 What's New in v0.4.0
+- **BM25 Deterministic Reranking:** Fetched sources are now ordered by keyword-overlap relevance (BM25) before being presented to the LLM, so the most relevant pages occupy the top slots — where LLMs attend most strongly. Deterministic, zero-cost, no new dependencies.
+- **New admin valve `enable_bm25_rerank`** (default: `True`): Toggle BM25 reranking globally without restarting Open WebUI.
+- **Text sanitization refactor:** The cleaning pipeline is now a dedicated `_sanitize_text` helper, and the noise-filter regex is compiled once at module load (was recompiled per source per request).
 
 ---
 
@@ -23,6 +22,7 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 - **Multi-Modifier Syntax:** Chain modifiers effortlessly to dictate search behavior. Force specific languages, context depth, and result limits on the fly (e.g., `??:en:10:c3`).
 - **Pure Text Extraction:** Utilizes `lxml` for surgical HTML cleaning. It strips away useless navigation menus, cookie banners, and footers, feeding the LLM only the pure, relevant article text to save tokens and improve accuracy.
 - **Anti-Scraping Stealth & Resilience:** Concurrently fetches pages while rotating through 20 unique browser User-Agents. If a website blocks the request (403 Forbidden), the "Gap-Filler" mechanism automatically fetches backup links in the background.
+- **BM25 Relevance Reranking:** After fetching, sources are reordered by BM25 keyword-overlap relevance against the user query and generated sub-queries, ensuring the most relevant pages appear first in the LLM context. Deterministic and zero-cost.
 - **RAG & Context Lockdown:** Temporarily disables native document retrieval (RAG) and standard searches during its execution round to prevent Open WebUI from polluting the prompt with conflicting background data.
 
 ---

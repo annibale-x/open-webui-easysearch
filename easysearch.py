@@ -1,6 +1,6 @@
 """
 title: 🌐 EasySearch
-version: 0.3.5
+version: 0.4.0
 author: Hannibal
 repository: https://github.com/x-hannibal/open-webui-easysearch
 author_email: annibale.x@gmail.com
@@ -11,6 +11,7 @@ description: High-performance Web Search filter. Triggers: '?? <query>' or '??' 
 import asyncio
 import datetime
 import json
+import math
 import os
 import random
 import re
@@ -155,6 +156,9 @@ class ConfigService:
                 "max_results_per_query": self.valves.max_results_per_query,
                 # --- Renamed for clarity in the model ---
                 "auto_recovery_fetch": gap_filler_state,
+                # --- BM25 Reranker ---
+                "enable_bm25_rerank": self.valves.enable_bm25_rerank,
+                "generated_queries": [],
                 # --- Runtime State ---
                 "user_query": "",
                 "search_language": None,  # Tracked for debug
@@ -267,6 +271,7 @@ class WebSearchHandler:
             if not queries:
                 queries = [query]
 
+            self.cfg.generated_queries = queries
             self.log(f"Generated Queries ({len(queries)}): {queries}")
             await self.em.emit_search_queries(queries)
 
@@ -530,6 +535,60 @@ class WebSearchHandler:
 
             return ""
 
+    def _sanitize_text(self, text: str) -> str:
+        """Full cleaning pipeline: CRLF normalization, unicode/BiDi scrubber,
+        noise-line filter, repeated-line dedup, dynamic truncation.
+        """
+        max_len = self.cfg.max_result_length
+
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Aggressive sterilization (C0/C1 codes, \ufffd, Zero-Width/BiDi codes)
+        text = re.sub(
+            r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffd\u200b-\u200f\u202a-\u202e\u2066-\u2069]+",
+            " ",
+            text,
+        )
+
+        text = re.sub(r"[ \t\u00A0]+", " ", text)
+
+        lines = text.split("\n")
+        cleaned_lines = []
+        prev_line = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if (
+                NOISE_LINE_RE.match(line)
+                or "Accetta tutto" in line
+                or "Rifiuta tutto" in line
+            ):
+                continue
+
+            if len(line) < 5 and not any(c.isalnum() for c in line):
+                continue
+
+            if len(line) < 20 and re.match(
+                r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\w{3} \d{1,2},? \d{4}", line
+            ):
+                continue
+
+            if line == prev_line:
+                continue
+
+            cleaned_lines.append(line)
+            prev_line = line
+
+        text = "\n".join(cleaned_lines)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        if len(text) > max_len:
+            text = text[:max_len] + "... [TRUNCATED]"
+
+        return text
+
     async def _process_results(self, results: Any, target_count: int) -> Optional[str]:
         """
         Parses results, fetches raw HTML in parallel with a fallback mechanism (Gap-Filler).
@@ -631,16 +690,10 @@ class WebSearchHandler:
 
         # --- FINAL CONTEXT CONSTRUCTION ---
         context_parts = []
-        max_len = self.cfg.max_result_length
-
-        noise_pattern = re.compile(
-            r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
-            re.IGNORECASE,
-        )
-
         source_id = 1
 
-        # Process Candidates (Scraped Content + Snippet Fallback)
+        # --- PHASE A: BUILD SOURCES (clean + sanitize) ---
+        sources: List[Dict[str, Any]] = []
         for item in candidates:
             url = item.get("link", "")
             snippet = item.get("snippet", "")
@@ -652,76 +705,41 @@ class WebSearchHandler:
 
             # HEURISTIC: Use snippet if scraping resulted in low-quality/empty content
             if not text or len(text) < len(snippet) or text.count("\ufffd") > 10:
-                text = (
-                    f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
-                )
+                text = f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
 
-            # Cleaning Pipeline
-            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            text = self._sanitize_text(text)
 
-            # Aggressive sterilization (C0/C1 codes, \ufffd, and Zero-Width/BiDi codes)
-            # \u200b-\u200f: Zero-width spaces and formatting
-            # \u202a-\u202e, \u2066-\u2069: Bi-Directional text overrides
-            text = re.sub(
-                r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffd\u200b-\u200f\u202a-\u202e\u2066-\u2069]+",
-                " ",
-                text,
-            )
+            sources.append({
+                "title": item.get("title", "Source"),
+                "url": url,
+                "snippet": snippet,
+                "content": text,
+            })
 
-            text = re.sub(r"[ \t\u00A0]+", " ", text)
+        # --- PHASE B: BM25 RERANK (valve-gated) ---
+        if self.cfg.enable_bm25_rerank and len(sources) > 1:
+            rerank_query = " ".join(
+                [self.cfg.user_query] + list(self.cfg.generated_queries or [])
+            ).strip()
+            if rerank_query:
+                sources = rerank_by_bm25(rerank_query, sources)
+                if self.debug:
+                    self.debug.dump(
+                        [{"url": s["url"], "title": s["title"]} for s in sources],
+                        "BM25 RERANKED ORDER",
+                    )
 
-            lines = text.split("\n")
-            cleaned_lines = []
-            prev_line = ""
-
-            # Aggiunta opzionale al ciclo for line in lines:
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                # Salta le righe di cookie e privacy boilerplate
-                if (
-                    noise_pattern.match(line)
-                    or "Accetta tutto" in line
-                    or "Rifiuta tutto" in line
-                ):
-                    continue
-
-                if noise_pattern.match(line):
-                    continue
-
-                if len(line) < 5 and not any(c.isalnum() for c in line):
-                    continue
-
-                if len(line) < 20 and re.match(
-                    r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\w{3} \d{1,2},? \d{4}", line
-                ):
-                    continue
-
-                if line == prev_line:
-                    continue
-
-                cleaned_lines.append(line)
-                prev_line = line
-
-            text = "\n".join(cleaned_lines)
-            text = re.sub(r"\n{3,}", "\n\n", text)
-
-            # Dynamic Truncation
-            if len(text) > max_len:
-                text = text[:max_len] + "... [TRUNCATED]"
-
+        # --- PHASE C: BUILD CONTEXT IN RANKED ORDER ---
+        for source in sources:
             context_parts.append(
-                f"--- Source {source_id}: {item.get('title', 'Source')} ---\n"
-                f"URL: {url}\n"
-                f"Summary (Snippet): {snippet}\n"
-                f"Full Content:\n{text}\n"
+                f"--- Source {source_id}: {source['title']} ---\n"
+                f"URL: {source['url']}\n"
+                f"Summary (Snippet): {source['snippet']}\n"
+                f"Full Content:\n{source['content']}\n"
             )
-
             await self.em.emit_citation(
-                item.get("title", "Source"), item.get("snippet", ""), url
+                source["title"], source["snippet"], source["url"]
             )
-
             source_id += 1
 
         # Process remaining_pool (Snippet-Only Injection for massive signal)
@@ -856,6 +874,76 @@ class DebugService:
         )
 
 
+# --- NOISE FILTER (module-level compile) ---
+NOISE_LINE_RE = re.compile(
+    r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
+    re.IGNORECASE,
+)
+
+
+# --- RERANKER (Tier 1 Deterministic BM25) ---
+# Ported from mcp-webgate src/mcp_webgate/utils/reranker.py
+
+BM25_K1 = 1.5
+BM25_B = 0.75
+
+
+def _tokenize(text: str) -> List[str]:
+    return re.findall(r"\b\w+\b", text.lower())
+
+
+def _bm25_scores(
+    query_tokens: List[str],
+    docs: List[str],
+    k1: float = BM25_K1,
+    b: float = BM25_B,
+) -> List[float]:
+    """Return BM25 scores for each document against the query tokens."""
+    N = len(docs)
+    tokenized = [_tokenize(d) for d in docs]
+    avg_len = sum(len(t) for t in tokenized) / max(N, 1)
+
+    scores: List[float] = []
+    for doc_tokens in tokenized:
+        tf_map: Dict[str, int] = {}
+        for tok in doc_tokens:
+            tf_map[tok] = tf_map.get(tok, 0) + 1
+        doc_len = len(doc_tokens)
+        score = 0.0
+        for term in set(query_tokens):
+            tf = tf_map.get(term, 0)
+            df = sum(1 for t in tokenized if term in t)
+            idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
+            numerator = tf * (k1 + 1)
+            denominator = tf + k1 * (1 - b + b * doc_len / max(avg_len, 1))
+            score += idf * numerator / max(denominator, 1e-9)
+        scores.append(score)
+
+    return scores
+
+
+def rerank_by_bm25(query: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rerank sources by BM25 score. Pass-through on <= 1 source or empty query.
+
+    Each source is a dict with keys: title, url, snippet, content.
+    Returns a new list; input is not mutated.
+    """
+    if len(sources) <= 1:
+        return list(sources)
+
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return list(sources)
+
+    docs = [
+        f"{s.get('title', '')} {s.get('snippet', '')} {s.get('content', '')[:3000]}"
+        for s in sources
+    ]
+    scores = _bm25_scores(query_tokens, docs)
+    ranked = sorted(zip(scores, range(len(sources))), reverse=True)
+    return [sources[i] for _, i in ranked]
+
+
 class Filter:
     # Set high priority to ensure this filter runs LAST in the pipeline.
     priority = 999
@@ -911,6 +999,13 @@ class Filter:
         auto_recovery_fetch: bool = Field(
             default=False,
             description="If enabled, performs a second search round to replace failed or empty pages.",
+        )
+        enable_bm25_rerank: bool = Field(
+            default=True,
+            description=(
+                "Rerank fetched sources by BM25 keyword relevance against the query "
+                "before building the LLM context. Deterministic, zero-cost."
+            ),
         )
         debug: bool = Field(default=False)
 

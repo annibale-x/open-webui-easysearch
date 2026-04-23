@@ -1,3 +1,8 @@
+* 2026-04-23: v0.4.0 - BM25 Deterministic Reranking (Hannibal)
+  * **feat:** Tier 1 BM25 reranker ported from mcp-webgate. Fetched sources are now ordered by keyword-overlap relevance before being presented to the LLM, so the most relevant pages occupy the top slots (where LLMs attend most strongly). Deterministic, zero-cost, no new dependencies.
+  * **feat:** New admin valve `enable_bm25_rerank` (default: `True`). Toggle BM25 reranking globally without restarting Open WebUI.
+  * **enh:** Text sanitization pipeline extracted into `WebSearchHandler._sanitize_text`. The noise-filter regex is now compiled once at module load (`NOISE_LINE_RE`) instead of being recompiled per source per request.
+
 * 2026-04-23: v0.3.5 - Bug Fixes & Security (Hannibal)
   * **fix:** Clamp `WEB_SEARCH_RESULT_COUNT` to a configurable `max_results_per_query` valve (default: 20). Brave Search API hard-rejects `count > 20` with 422 for all plans. Closes #3.
   * **fix:** Guard race condition on shared Filter singleton — concurrent requests could reset `self.ctx = None` mid-execution, causing `'NoneType' has no attribute 'model'` in `DebugService.emit()` and `outlet()`. Closes #1.
