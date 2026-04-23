@@ -1,20 +1,18 @@
-## 🌐 EasySearch v0.3.4: High-Performance Web Search Filter
+## 🌐 EasySearch v0.3.5: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
-[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-181717?logo=github&logoColor=white)](https://github.com/annibale-x/open-webui-easysearch)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-181717?logo=github&logoColor=white)](https://github.com/x-hannibal/open-webui-easysearch)
 ![Open WebUI Plugin](https://img.shields.io/badge/Open%20WebUI-Plugin-blue?style=flat&logo=openai)
-![License](https://img.shields.io/github/license/annibale-x/open-webui-easysearch?color=green)
+![License](https://img.shields.io/github/license/x-hannibal/open-webui-easysearch?color=green)
 
 ---
 
-### 🆕 What's New in v0.3.4
-- **Documentation Update**: Added **Troubleshooting & FAQ** section.
-- **Fail-Fast Global Check**: Added immediate validation of Open WebUI's global Web Search toggle at startup to prevent unnecessary LLM processing if disabled.
-- **Fixed Dual-Language Syntax (`??:src>dest`):** to decouple the search language from the response language.
-- **Linguistic Precision:** Improved "Smart Default" logic with a dedicated Language Anchor. Separating the search intent from the conversational language is now more accurate.
-- **Binary Scrubber:** Upgraded text cleaning engine that automatically detects and skips binary files (.pdf, .docx, .zip) and annihilates Unicode junk characters from dirty web sources.
-- **Oversampling Pool Injection:** All retrieved search snippets from unread pages are now fed directly to the LLM providing massive signal density.
+### 🆕 What's New in v0.3.5
+- **Fix — Brave Search 422 error:** Clamp `WEB_SEARCH_RESULT_COUNT` to a configurable `max_results_per_query` valve (default: 20). The Brave Search API hard-rejects `count > 20` for all plans.
+- **Fix — Race condition crash:** Concurrent requests on the shared Filter singleton could reset internal state mid-execution, causing `'NoneType' has no attribute 'model'` errors. `outlet()` and `DebugService.emit()` now capture a safe local reference.
+- **Fix — Coroutine user object:** Missing `await` on `Users.get_user_by_id` calls was returning coroutines instead of user objects, causing `'coroutine' has no attribute 'role'`.
+- **Security — Prompt injection mitigation:** Raw web content is now wrapped in `<search_results>` XML tags with an explicit untrusted-data instruction to reduce indirect prompt injection risk from malicious pages.
 
 ---
 
@@ -194,7 +192,7 @@ If you encounter a persistent issue, please enable the **Debug** valve in the Ea
 * Run the search again to capture the error details.
 * **Admins:** Check your Docker container logs for lines starting with `⚡ EasySearch DEBUG:`.
 * **Users:** Expand the **🔍 EasySearch Debug** dropdown at the bottom of the LLM's response and copy the JSON payload.
-* [Open an issue on GitHub](https://github.com/annibale-x/open-webui-easysearch/issues) and attach these logs along with your Open WebUI version.
+* [Open an issue on GitHub](https://github.com/x-hannibal/open-webui-easysearch/issues) and attach these logs along with your Open WebUI version.
 
 ---
 
@@ -202,4 +200,4 @@ If you encounter a persistent issue, please enable the **Debug** valve in the Ea
 
 If you experience anomalies, unexpected crashes, or have ideas for new modifiers and features, community feedback is highly appreciated. 
 
-**Found a bug or want to suggest an improvement?** Please [open an issue on GitHub](https://github.com/annibale-x/open-webui-easysearch/issues).
+**Found a bug or want to suggest an improvement?** Please [open an issue on GitHub](https://github.com/x-hannibal/open-webui-easysearch/issues).

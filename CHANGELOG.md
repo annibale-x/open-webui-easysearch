@@ -1,3 +1,9 @@
+* 2026-04-23: v0.3.5 - Bug Fixes & Security (Hannibal)
+  * **fix:** Clamp `WEB_SEARCH_RESULT_COUNT` to a configurable `max_results_per_query` valve (default: 20). Brave Search API hard-rejects `count > 20` with 422 for all plans. Closes #3.
+  * **fix:** Guard race condition on shared Filter singleton — concurrent requests could reset `self.ctx = None` mid-execution, causing `'NoneType' has no attribute 'model'` in `DebugService.emit()` and `outlet()`. Closes #1.
+  * **fix:** Added missing `await` on `Users.get_user_by_id` calls — was returning coroutines instead of user objects, causing `'coroutine' has no attribute 'role'`. (PR #4 by @jaybill). Closes #5.
+  * **security:** Wrapped raw web content in `<search_results>` XML tags with explicit untrusted-data instruction to mitigate indirect prompt injection from malicious pages. Addresses #2.
+
 * 2026-03-09: v0.3.4 - Documentation & Logic Improvements (Hannibal)  
   * Added **Troubleshooting & FAQ** section to README.md.
   * Added immediate validation of Open WebUI's global Web Search toggle at startup.
