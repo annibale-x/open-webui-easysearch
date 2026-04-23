@@ -831,11 +831,15 @@ class WebSearchHandler:
             )
 
             for item in remaining_pool:
+                title = item.get("title") or item.get("link", "Unknown")
+                snippet = item.get("snippet", "")
+                url = item.get("link", "")
                 context_parts.append(
-                    f"[{source_id}] {item.get('title')} (Snippet Only)\n"
-                    f"URL: {item.get('link')}\n"
-                    f"Content: {item.get('snippet')}\n"
+                    f"[{source_id}] {title} (Snippet Only)\n"
+                    f"URL: {url}\n"
+                    f"Content: {snippet}\n"
                 )
+                await self.em.emit_citation(title, snippet, url)
                 source_id += 1
 
         return "\n".join(context_parts)
