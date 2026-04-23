@@ -2,7 +2,8 @@
   * **enh:** Raised `max_results_per_query` upper bound from 50 to 100 so admins on SerpAPI, Exa, and Serper (which allow up to 100 per request) can make full use of their engine.
   * **docs:** Valve description is now engine-agnostic and lists the actual per-engine API caps for quick reference.
 
-* 2026-04-23: v0.4.0 - BM25 Reranking + Dynamic Budget (Hannibal)
+* 2026-04-23: v0.4.0 - BM25 Reranking + Dynamic Budget + Reasoning-Model Support (Hannibal)
+  * **fix:** Strip `<think>...</think>` and `<thinking>...</thinking>` blocks from LLM responses before parsing. Reasoning models (phi-reasoning, deepseek-r1, qwen3 thinking mode) emit these blocks inline; without stripping them, JSON parsing in query generation fails and the fallback line-splitter turns reasoning text into search queries. Also handles truncated/unclosed `<think>` openers defensively. Fix applied to both `_generate_queries` and `_extract_query_from_context`.
   * **feat:** BM25 relevance reranking. Fetched pages are ranked by keyword-overlap relevance against your query, so the most relevant sources appear first in the model's context — where LLM attention is strongest.
   * **feat:** Dynamic budget allocation. The per-source character budget is now proportional to BM25 score — highly relevant pages get up to `3 × max_result_length` chars; marginal pages shrink to a 200-char floor. Total context size is unchanged vs. the previous flat allocation — the same budget is just distributed more intelligently.
   * **feat:** Surplus redistribution. Characters unused by failed fetches or thin pages are reclaimed and handed to high-scoring pages that would otherwise be truncated. No wasted budget.

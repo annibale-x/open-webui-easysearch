@@ -159,6 +159,7 @@ class ConfigService:
                 # --- BM25 Reranker ---
                 "enable_bm25_rerank": self.valves.enable_bm25_rerank,
                 "generated_queries": [],
+                "pipeline_stats": None,
                 # --- Runtime State ---
                 "user_query": "",
                 "search_language": None,  # Tracked for debug
@@ -327,6 +328,7 @@ class WebSearchHandler:
 
             if isinstance(response, dict) and "choices" in response:
                 content = response["choices"][0]["message"]["content"].strip()
+                content = _strip_reasoning_blocks(content)
                 content = re.sub(r"```json|```", "", content).strip()
                 try:
                     data = json.loads(content)
@@ -695,9 +697,12 @@ class WebSearchHandler:
             snippet = item.get("snippet", "")
             raw_html = fetched_html_map.get(url)
             text = ""
+            fetched_bytes = len(raw_html) if raw_html else 0
+            lxml_len = 0
 
             if raw_html:
                 text = await self._clean_with_lxml(raw_html)
+                lxml_len = len(text)
 
             # HEURISTIC: Use snippet if scraping resulted in low-quality/empty content
             if not text or len(text) < len(snippet) or text.count("\ufffd") > 10:
@@ -710,6 +715,9 @@ class WebSearchHandler:
                 "url": url,
                 "snippet": snippet,
                 "content": text,
+                "_fetched_bytes": fetched_bytes,
+                "_lxml_len": lxml_len,
+                "_clean_len": len(text),
             })
 
         # --- PHASE B: BM25 RERANK + ADAPTIVE BUDGET ---
@@ -747,6 +755,9 @@ class WebSearchHandler:
                             {
                                 "url": s["url"],
                                 "title": s["title"],
+                                "fetched_bytes": s["_fetched_bytes"],
+                                "lxml_len": s["_lxml_len"],
+                                "clean_len": s["_clean_len"],
                                 "score": round(sc, 2),
                                 "init_alloc": ia,
                                 "final_alloc": a,
@@ -766,6 +777,36 @@ class WebSearchHandler:
             for source in sources:
                 if len(source["content"]) > max_len:
                     source["content"] = source["content"][:max_len] + "... [TRUNCATED]"
+
+            if self.debug:
+                self.debug.dump(
+                    [
+                        {
+                            "url": s["url"],
+                            "fetched_bytes": s["_fetched_bytes"],
+                            "lxml_len": s["_lxml_len"],
+                            "clean_len": s["_clean_len"],
+                            "actual_len": len(s["content"]),
+                        }
+                        for s in sources
+                    ],
+                    "PIPELINE STATS",
+                )
+
+        # --- AGGREGATE PIPELINE STATS ---
+        self.cfg.pipeline_stats = {
+            "src_count": len(sources),
+            "fetched_bytes": sum(s["_fetched_bytes"] for s in sources),
+            "lxml_chars": sum(s["_lxml_len"] for s in sources),
+            "clean_chars": sum(s["_clean_len"] for s in sources),
+            "ctx_chars": sum(len(s["content"]) for s in sources),
+        }
+
+        # Strip internal metric fields before context construction
+        for source in sources:
+            source.pop("_fetched_bytes", None)
+            source.pop("_lxml_len", None)
+            source.pop("_clean_len", None)
 
         # --- PHASE C: BUILD CONTEXT IN RANKED ORDER ---
         for source in sources:
@@ -917,6 +958,33 @@ NOISE_LINE_RE = re.compile(
     r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
     re.IGNORECASE,
 )
+
+
+# --- REASONING-MODEL RESPONSE CLEANING ---
+# Reasoning models (phi-reasoning, deepseek-r1, qwen3 thinking mode, etc.) emit
+# <think>...</think> blocks before the actual answer. These break downstream JSON
+# parsing and leak reasoning text into search queries when used with the fallback
+# line-split parser.
+
+_THINK_BLOCK_RE = re.compile(
+    r"<think(?:ing)?\s*>.*?</think(?:ing)?\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_THINK_UNCLOSED_RE = re.compile(
+    r"<think(?:ing)?\s*>.*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_reasoning_blocks(text: str) -> str:
+    """Remove <think>/<thinking> blocks emitted by reasoning models.
+
+    Handles both closed blocks and a truncated/unclosed opener (defensive:
+    if generation was cut, everything from the tag to end-of-string is removed).
+    """
+    text = _THINK_BLOCK_RE.sub("", text)
+    text = _THINK_UNCLOSED_RE.sub("", text)
+    return text.strip()
 
 
 # --- RERANKER (Tier 1 Deterministic BM25 + Adaptive Budget) ---
@@ -1188,7 +1256,9 @@ class Filter:
             )
 
             if isinstance(response, dict) and "choices" in response:
-                return response["choices"][0]["message"]["content"].strip().strip('"')
+                content = response["choices"][0]["message"]["content"].strip()
+                content = _strip_reasoning_blocks(content)
+                return content.strip('"')
             return context_text[:100]
 
         except Exception as e:
@@ -1426,11 +1496,30 @@ class Filter:
                     content = last_msg.get("content", "")
                     debug_out = self.debug.emit()
 
+                    # Pipeline stats summary line (always shown after a search)
+                    stats = ctx.model.pipeline_stats
+                    stats_line = ""
+                    if stats:
+                        def _fmt(n: int) -> str:
+                            return f"{n / 1000:.1f}k" if n >= 1000 else f"{n}b"
+
+                        resp_len = len(content) if isinstance(content, str) else 0
+                        stats_line = (
+                            f"\n\n---\n📊 {stats['src_count']} src · "
+                            f"{_fmt(stats['fetched_bytes'])} raw → "
+                            f"{_fmt(stats['lxml_chars'])} lxml → "
+                            f"{_fmt(stats['clean_chars'])} clean → "
+                            f"{_fmt(stats['ctx_chars'])} ctx → "
+                            f"{_fmt(resp_len)} reply"
+                        )
+
                     if isinstance(content, str):
-                        last_msg["content"] += debug_out
-                    elif isinstance(content, list) and debug_out:
-                        content.append({"type": "text", "text": debug_out})
-                        last_msg["content"] = content
+                        last_msg["content"] += stats_line + debug_out
+                    elif isinstance(content, list):
+                        combined = stats_line + debug_out
+                        if combined:
+                            content.append({"type": "text", "text": combined})
+                            last_msg["content"] = content
 
                 self.debug.log("--- OUTLET COMPLETE ---")
                 await self.em.emit_status("EasySearch completed", True)
