@@ -2,13 +2,12 @@
   * **enh:** Raised `max_results_per_query` upper bound from 50 to 100 so admins on SerpAPI, Exa, and Serper (which allow up to 100 per request) can make full use of their engine.
   * **docs:** Valve description is now engine-agnostic and lists the actual per-engine API caps for quick reference.
 
-* 2026-04-23: v0.4.0 - BM25 Reranking + Adaptive Budget (Hannibal)
-  * **feat:** BM25 relevance reranking ported from mcp-webgate. Sources are ordered by keyword-overlap relevance against the user query.
-  * **feat:** Adaptive budget allocation. The per-source char budget is now proportional to BM25 score — highly relevant pages get up to `max_result_length × bm25_fetch_factor` chars; marginal pages get truncated to a 200-char floor. Total context size is budget-neutral vs. the previous flat allocation.
-  * **feat:** Surplus redistribution. Chars unused by failed fetches or thin pages are reclaimed and redistributed to high-scoring pages whose content would otherwise be truncated.
-  * **feat:** New admin valve `enable_bm25_rerank` (default: `True`) — single toggle for the entire block (ordering + allocation).
-  * **feat:** New admin valve `bm25_fetch_factor` (default: `3`, range 1–5) — generous pre-allocation multiplier used as the per-source ceiling.
-  * **enh:** `WebSearchHandler._sanitize_text` now does cleaning only; truncation moved to the adaptive allocation phase. The noise-filter regex is compiled once at module load (`NOISE_LINE_RE`).
+* 2026-04-23: v0.4.0 - BM25 Reranking + Dynamic Budget (Hannibal)
+  * **feat:** BM25 relevance reranking. Fetched pages are ranked by keyword-overlap relevance against your query, so the most relevant sources appear first in the model's context — where LLM attention is strongest.
+  * **feat:** Dynamic budget allocation. The per-source character budget is now proportional to BM25 score — highly relevant pages get up to `3 × max_result_length` chars; marginal pages shrink to a 200-char floor. Total context size is unchanged vs. the previous flat allocation — the same budget is just distributed more intelligently.
+  * **feat:** Surplus redistribution. Characters unused by failed fetches or thin pages are reclaimed and handed to high-scoring pages that would otherwise be truncated. No wasted budget.
+  * **feat:** New admin valve `enable_bm25_rerank` (default: `True`) — single toggle for the entire block (ranking + allocation). Disable to restore the v0.3.x flat-allocation behavior.
+  * **enh:** `WebSearchHandler._sanitize_text` now does cleaning only; truncation moved to the dynamic allocation phase. The noise-filter regex is compiled once at module load (`NOISE_LINE_RE`).
 
 * 2026-04-23: v0.3.5 - Bug Fixes & Security (Hannibal)
   * **fix:** Clamp `WEB_SEARCH_RESULT_COUNT` to a configurable `max_results_per_query` valve (default: 20). Brave Search API hard-rejects `count > 20` with 422 for all plans. Closes #3.

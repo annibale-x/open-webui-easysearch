@@ -8,9 +8,30 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.4.0
-- **BM25 Adaptive Budget:** Instead of giving every scraped page the same character allowance, EasySearch now ranks pages by relevance to your query (BM25) and gives the best pages *more* context and the weaker pages *less*. Same total budget, much higher signal-to-noise. Deterministic, zero-cost, no new dependencies.
-- **New admin valves:** `enable_bm25_rerank` (on by default) and `bm25_fetch_factor` (tuning knob for the generous pre-allocation window, default 3).
+### 🆕 What's New in v0.4.0 — Smart Context Allocation
+
+Answers are only as good as the context the model receives. Until now, EasySearch
+handed every fetched page the same chunk of characters — a great tutorial and a
+thin blog post both got the same slice. No more.
+
+- **🎯 Pages are ranked by relevance.** A fast keyword-matching algorithm (BM25)
+  scores every page against your question. The most relevant ones are placed first,
+  where the model pays most attention.
+- **💰 Smart budget, not equal shares.** The character budget is now split
+  *proportionally to relevance*. The best page can receive up to 3× the default
+  allowance; marginal pages shrink to a short summary. **Same total context
+  size, but packed with signal instead of noise.**
+- **♻️ No waste.** When a page fails to load or turns out thin, its leftover
+  budget is automatically reclaimed and handed to the pages that really had more
+  to say.
+- **🆓 Free and instant.** Pure math — no extra API calls, no extra dependencies,
+  no latency. If you prefer the old behavior, one toggle (`enable_bm25_rerank`)
+  turns it off.
+
+**In practice:** for a `?? <question>` with 10 sources, the top-ranked page now
+can carry 8–12k characters of real content while noisy or marginally-related
+pages get cut to a 200-char snippet — instead of everyone getting a flat 4k.
+The answer you get back is noticeably more focused.
 
 ---
 
@@ -21,7 +42,7 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 - **Multi-Modifier Syntax:** Chain modifiers effortlessly to dictate search behavior. Force specific languages, context depth, and result limits on the fly (e.g., `??:en:10:c3`).
 - **Pure Text Extraction:** Utilizes `lxml` for surgical HTML cleaning. It strips away useless navigation menus, cookie banners, and footers, feeding the LLM only the pure, relevant article text to save tokens and improve accuracy.
 - **Anti-Scraping Stealth & Resilience:** Concurrently fetches pages while rotating through 20 unique browser User-Agents. If a website blocks the request (403 Forbidden), the "Gap-Filler" mechanism automatically fetches backup links in the background.
-- **BM25 Adaptive Context:** Automatically gives more context budget to the most relevant sources and compresses marginal ones, maximizing useful information per token. Deterministic and zero-cost.
+- **Smart Context Allocation (BM25 + Dynamic Budget):** Automatically ranks fetched pages by relevance and gives the best ones more context budget while shrinking marginal ones. Same total size, far more signal per token. Deterministic and zero-cost.
 - **RAG & Context Lockdown:** Temporarily disables native document retrieval (RAG) and standard searches during its execution round to prevent Open WebUI from polluting the prompt with conflicting background data.
 
 ---
@@ -123,6 +144,24 @@ Websites increasingly block bots with `403 Forbidden` errors. EasySearch combats
 
 #### 4. The Gap-Filler (Auto-Recovery)
 If the user requests 10 pages, but 3 of them result in timeouts or 403s, traditional scrapers return only 7 results. If `Auto Recovery Fetch` is enabled, EasySearch detects the gap and dynamically executes a secondary parallel fetch utilizing the "leftovers" from the Oversampling pool, guaranteeing the requested payload size.
+
+#### 5. Smart Context Allocation (BM25 + Dynamic Budget)
+
+Traditional filters give every fetched page the same character allowance (e.g. 4.000 chars each, regardless of relevance). If 7 out of 10 pages are only loosely related to the question, that's ~28.000 characters of noise the LLM has to wade through before finding the signal. Two pages that actually answer the question compete for attention with eight that don't.
+
+EasySearch v0.4.0 replaces that flat allocation with a **relevance-proportional budget**:
+
+* **Step 1 — Ranking (BM25).** After pages are fetched and cleaned, each one gets a relevance score against your original query. BM25 is the classic keyword-overlap algorithm used by search engines — it rewards pages where your query terms appear frequently, are rare across the rest of the fetched pool, and are not buried in sprawling boilerplate.
+* **Step 2 — Proportional allocation.** Instead of every page getting the same `max_result_length` chars, the **total budget** (`max_result_length × number_of_sources`) is redistributed: the top-scoring page can receive up to 3× the default allowance; the weakest pages shrink to a 200-char floor (just enough to keep them cited and visible).
+* **Step 3 — Surplus reclamation.** When a page fails to load or turns out to be thin, its unused allocation is automatically clawed back and handed to pages that had more to say but got truncated.
+
+**The total context sent to the LLM stays the same size as before** — same token cost, same model-context pressure. What changes is the **distribution**: you stop paying LLM tokens for boilerplate from weak pages, and start getting deeper content from the pages that actually matter.
+
+**Practical effect.** On a `??:10` query with two highly-relevant in-depth articles and eight tangential ones, the in-depth articles now get up to 10–12k characters of real body text each, while the tangential ones are compressed to a ~200-char snippet. The model reads what counts first and is not distracted by the rest.
+
+**Controls.** The whole mechanism is a single admin toggle: `enable_bm25_rerank` (default `on`). Set it to `off` to restore the pre-v0.4.0 flat allocation. There are no performance knobs to tune — the algorithm is deterministic and parameter-free from the user's perspective.
+
+**What it is NOT.** It's not a semantic search. BM25 matches literal keywords: a page using synonyms or rephrasing may still score low even when it's relevant. For queries where semantic understanding matters, combine the reranker with the dual-language modifier (`??:en>it`) to align search and response languages, or rely on the oversampling snippet pool to recover signal the reranker missed.
 
 ---
 

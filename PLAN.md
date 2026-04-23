@@ -118,7 +118,7 @@
 - [x] Add `redistribute_budget(sources, allocs, scores)` helper (ports mcp-webgate `_redistribute_budget`)
 - [x] Add module constant `BM25_FLOOR_CHARS = 200`
 - [x] Replace Phase B in `_process_results` with: `rerank_with_scores` → proportional allocation → surplus redistribution → in-place truncation
-- [x] New admin valve `bm25_fetch_factor: int = 3` (ge=1, le=5) wired through `ConfigService`
+- [x] Per-source allocation ceiling as module constant `BM25_CEILING_FACTOR = 3` (initially scoped as a valve; demoted to constant — exposing it would bloat config for a knob 99% of admins never touch)
 - [x] Replace debug key `BM25 RERANKED ORDER` with `BM25 ADAPTIVE BUDGET` carrying per-source `score`, `init_alloc`, `final_alloc`, `actual_len`
 - [x] Amend the existing v0.4.0 `CHANGELOG.md` entry (do NOT add a new version) to reflect adaptive budget + new valve
 - [x] Amend the existing v0.4.0 "What's New" section in README accordingly
