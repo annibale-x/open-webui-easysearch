@@ -98,6 +98,8 @@ EasySearch is highly customizable. Administrators can set global safety limits, 
 | **Max Download MB** | `1` | Anti-flood protection. Maximum Megabytes to download per single web page. |
 | **Max Result Length** | `4000` | Maximum number of characters to keep per scraped article. Prevents blowing up the LLM's context window. |
 | **Oversampling Factor** | `2` | Multiplier for search requests. If set to 2, and the target is 10 pages, EasySearch fetches 20 links from the search engine, deduplicates them, and only downloads the top 10 valid ones. |
+| **Max Results Per Query** | `20` | Hard cap on results requested per query to the search API. Default 20 is safe for all backends; raise up to 100 if your engine (e.g. SerpAPI, Exa, Serper) supports it. |
+| **Enable BM25 Rerank** | `True` | Rerank fetched sources by BM25 keyword relevance before building the LLM context. Deterministic, zero-cost. |
 
 ---
 

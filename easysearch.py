@@ -993,8 +993,8 @@ class Filter:
         max_results_per_query: int = Field(
             default=20,
             ge=1,
-            le=50,
-            description="Hard cap on results requested per query to the search API. Brave Search API maximum is 20.",
+            le=100,
+            description="Hard cap on results requested per query to the search API. Default 20 is safe for all backends. Typical API maxima: Brave/Tavily 20, Google PSE 10, Bing/DuckDuckGo 50, SerpAPI/Exa/Serper 100. Raise if your configured backend supports more.",
         )
         auto_recovery_fetch: bool = Field(
             default=False,

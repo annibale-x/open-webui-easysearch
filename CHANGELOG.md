@@ -1,3 +1,7 @@
+* 2026-04-23: v0.4.1 - Engine-Aware Result Cap (Hannibal)
+  * **enh:** Raised `max_results_per_query` upper bound from 50 to 100 so admins on SerpAPI, Exa, and Serper (which allow up to 100 per request) can make full use of their engine.
+  * **docs:** Valve description is now engine-agnostic and lists the actual per-engine API caps for quick reference.
+
 * 2026-04-23: v0.4.0 - BM25 Deterministic Reranking (Hannibal)
   * **feat:** Tier 1 BM25 reranker ported from mcp-webgate. Fetched sources are now ordered by keyword-overlap relevance before being presented to the LLM, so the most relevant pages occupy the top slots (where LLMs attend most strongly). Deterministic, zero-cost, no new dependencies.
   * **feat:** New admin valve `enable_bm25_rerank` (default: `True`). Toggle BM25 reranking globally without restarting Open WebUI.

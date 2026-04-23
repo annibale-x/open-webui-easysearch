@@ -94,11 +94,14 @@
 
 ## Current Milestone
 
-### M13 — BM25 Deterministic Reranking (v0.4.0, target 2026-04)
-**Spec:** `docs/BM25_RERANK.md`
-**Prompt:** `tasks/todo/feat-bm25-reranking.md`
-**Reference implementation:** `mcp-webgate/src/mcp_webgate/utils/reranker.py`
+### M13 — BM25 Reranking + Adaptive Budget (v0.4.0, HELD)
+**Spec:** `docs/BM25_RERANK.md` (revised — adaptive budget now in scope)
+**Prompts:** `tasks/todo/feat-bm25-reranking.md` (Phase 1, complete) + `tasks/todo/feat-bm25-adaptive-budget.md` (Phase 2, pending)
+**Reference implementation:** `mcp-webgate/src/mcp_webgate/utils/reranker.py` + `tools/query.py` (`_redistribute_budget`)
 
+**Status:** v0.4.0 is **held** until the adaptive budget phase lands. BM25 ordering alone provides weak value — the real leverage is proportional char allocation. Shipping v0.4.0 with ordering-only would waste the feature. CHANGELOG v0.4.0 entry must be rewritten when Phase 2 ships.
+
+#### Phase 1 — BM25 ordering (code complete, release held)
 - [x] Add module-level BM25 reranker helpers (`_tokenize`, `_bm25_scores`, `rerank_by_bm25`) ported from mcp-webgate
 - [x] Admin valve `enable_bm25_rerank: bool = True` wired through `ConfigService`
 - [x] Persist `cfg.generated_queries` in the unified model so the reranker can consume them
@@ -108,7 +111,33 @@
 - [x] Version bump to `0.4.0` in `easysearch.py` frontmatter and `README.md` heading
 - [x] Update `CHANGELOG.md` with `v0.4.0` entry
 - [x] Update README "What's New" and add a bullet under Main Features
-- [ ] Manual verification checklist executed in a real OWUI instance (see `docs/BM25_RERANK.md` §9)
+
+#### Phase 2 — Adaptive budget (required before v0.4.0 ships)
+- [ ] Strip truncation from `_sanitize_text` — pure cleaning only; truncation moves to the adaptive phase
+- [ ] Add `rerank_with_scores(query, sources)` helper (ports mcp-webgate signature; returns `(scores, reordered_sources)`)
+- [ ] Add `redistribute_budget(sources, allocs, scores)` helper (ports mcp-webgate `_redistribute_budget`)
+- [ ] Add module constant `BM25_FLOOR_CHARS = 200`
+- [ ] Replace Phase B in `_process_results` with: `rerank_with_scores` → proportional allocation → surplus redistribution → in-place truncation
+- [ ] New admin valve `bm25_fetch_factor: int = 3` (ge=1, le=5) wired through `ConfigService`
+- [ ] Replace debug key `BM25 RERANKED ORDER` with `BM25 ADAPTIVE BUDGET` carrying per-source `score`, `init_alloc`, `final_alloc`, `actual_len`
+- [ ] Amend the existing v0.4.0 `CHANGELOG.md` entry (do NOT add a new version) to reflect adaptive budget + new valve
+- [ ] Amend the existing v0.4.0 "What's New" section in README accordingly
+- [ ] Retire or deprecate the old `rerank_by_bm25` helper (callers migrate to `rerank_with_scores`)
+- [ ] Manual verification per `docs/BM25_RERANK.md` §9 — happy path + skewed scores + failed fetches + valve off + edge cases
+
+---
+
+## Next Milestone
+
+### M14 — Engine-Aware Result Cap (target 2026-MM)
+**Prompt:** `tasks/todo/enh-widen-results-cap.md`
+
+Context: `max_results_per_query` ships with `le=50` and a Brave-only description. Research across OWUI backends confirms 20 is a safe floor, but SerpAPI/Exa/Serper allow 100. Admin users on those engines are unnecessarily capped. Default stays 20 (backend-agnostic safe choice); only the upper bound and description change.
+
+- [x] Raise `max_results_per_query` upper bound from `le=50` to `le=100`
+- [x] Rewrite valve description to be engine-agnostic with per-engine cap hints
+- [x] CHANGELOG entry
+- [x] README admin-valves table reflects new wording
 
 ---
 
