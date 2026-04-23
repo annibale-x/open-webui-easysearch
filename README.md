@@ -147,7 +147,7 @@ If the user requests 10 pages, but 3 of them result in timeouts or 403s, traditi
 
 #### 5. Smart Context Allocation (BM25 + Dynamic Budget)
 
-Traditional filters give every fetched page the same character allowance (e.g. 4.000 chars each, regardless of relevance). If 7 out of 10 pages are only loosely related to the question, that's ~28.000 characters of noise the LLM has to wade through before finding the signal. Two pages that actually answer the question compete for attention with eight that don't.
+Previous versions of EasySearch gave every fetched page the same character allowance (e.g. 4.000 chars each, regardless of relevance). If 7 out of 10 pages were only loosely related to the question, that's ~28.000 characters of noise the LLM had to wade through before finding the signal. Two pages that actually answered the question were competing for attention with eight that didn't.
 
 EasySearch v0.4.0 replaces that flat allocation with a **relevance-proportional budget**:
 
@@ -161,7 +161,7 @@ EasySearch v0.4.0 replaces that flat allocation with a **relevance-proportional 
 
 **Controls.** The whole mechanism is a single admin toggle: `enable_bm25_rerank` (default `on`). Set it to `off` to restore the pre-v0.4.0 flat allocation. There are no performance knobs to tune — the algorithm is deterministic and parameter-free from the user's perspective.
 
-**What it is NOT.** It's not a semantic search. BM25 matches literal keywords: a page using synonyms or rephrasing may still score low even when it's relevant. For queries where semantic understanding matters, combine the reranker with the dual-language modifier (`??:en>it`) to align search and response languages, or rely on the oversampling snippet pool to recover signal the reranker missed.
+**What it is NOT.** It's not a semantic reranker. BM25 matches *literal keywords*: a page that answers your question using different terminology (synonyms, paraphrase, a different jargon) may still score low. Two practical ways to work around this: (a) phrase your query using the terminology you expect in the sources — e.g. say *"self-driving cars"* rather than *"autonomous vehicles"* if that's how the articles are written; (b) raise the result count with `??:15` or higher — the reranker then has more candidates to pick from, and the unread ones are automatically injected as snippets at the bottom of the context, preserving signal the ranker might have missed.
 
 ---
 
