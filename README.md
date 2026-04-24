@@ -1,10 +1,44 @@
-## 🌐 EasySearch v0.4.0: High-Performance Web Search Filter
+## 🌐 EasySearch v0.4.3: High-Performance Web Search Filter
 
 An intelligent, context-aware web search filter for Open WebUI. EasySearch bypasses noisy standard web scrapers, utilizing parallel fetching, structural HTML cleaning, and dynamic context-awareness to feed your LLM only the highest quality data.
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-181717?logo=github&logoColor=white)](https://github.com/x-hannibal/open-webui-easysearch)
 ![Open WebUI Plugin](https://img.shields.io/badge/Open%20WebUI-Plugin-blue?style=flat&logo=openai)
 ![License](https://img.shields.io/github/license/x-hannibal/open-webui-easysearch?color=green)
+
+---
+
+### 🆕 What's New in v0.4.3 — Citation Coherence & Pipeline Refinements
+
+The v0.4.x line introduced relevance-based budget allocation; v0.4.3 closes the
+loop on what reaches the model and what shows up in the UI.
+
+- **🎯 Inline `[N]` citations now reliably map to UI sources.** Source blocks
+  switched to `[N] Title` so the label matches the inline marker 1:1, and the
+  full snippet pool is now BM25-filtered and individually citation-registered —
+  no more dangling `[3]` or `[REF]…[/REF]` artefacts from models that improvise
+  their own citation format.
+- **🧹 Off-topic snippets are dropped before they reach the LLM.** Both the
+  fetched sources and the snippet-only oversampling pool are filtered through
+  the same BM25 zero-score gate, so Python `self` tutorials, Arabic Hamza
+  pages, and random topic news no longer leak into a query about autonomous
+  vehicles. Surviving sources inherit the budget the noise would have wasted.
+- **🧠 Prompt restructured around model attention.** Task framing
+  (`INSTRUCTION`, language anchor, snippet-priority hint) sits *before* the
+  search context; output rules (`CITATIONS`, `SECURITY`) sit *after*, where
+  recency bias makes them the last thing the model reads before generating.
+  This produced noticeably more verbose, well-structured answers across
+  Mistral, Gemma3, and Qwen3 thinking.
+- **📊 Reasoning models report honest reply lengths.** Qwen3 thinking,
+  DeepSeek-R1, Phi-reasoning chain-of-thought is now stripped before counting
+  the "reply" stat, so a 2k visible answer no longer reports as 14k.
+- **🎛️ New admin valve `inject_snippet_pool`** (default ON) — flip it OFF to
+  keep the LLM context tight to fully-fetched pages only, useful for short
+  factual lookups where pool clutter outweighs grounding signal.
+- **🔇 Pipeline stats are quiet by default.** The `📊 src · raw → lxml → clean
+  → ctx → reply` line is now appended to the response only when the admin
+  `debug` valve is ON; otherwise it goes only to the EasySearch debug log,
+  removing operator-only telemetry from the end-user view.
 
 ---
 
@@ -41,7 +75,7 @@ The answer you get back is noticeably more focused.
 - **Deep Contextual Awareness:** Automatically analyzes your recent conversation history to infer exactly what you want to search for, allowing for zero-prompt searches using just the `??` trigger.
 - **Multi-Modifier Syntax:** Chain modifiers effortlessly to dictate search behavior. Force specific languages, context depth, and result limits on the fly (e.g., `??:en:10:c3`).
 - **Pure Text Extraction:** Utilizes `lxml` for surgical HTML cleaning. It strips away useless navigation menus, cookie banners, and footers, feeding the LLM only the pure, relevant article text to save tokens and improve accuracy.
-- **Anti-Scraping Stealth & Resilience:** Concurrently fetches pages while rotating through 20 unique browser User-Agents. If a website blocks the request (403 Forbidden), the "Gap-Filler" mechanism automatically fetches backup links in the background.
+- **Anti-Scraping Stealth & Resilience:** Concurrently fetches pages while rotating through 40 unique browser User-Agents. If a website blocks the request (403 Forbidden), the "Gap-Filler" mechanism automatically fetches backup links in the background.
 - **Smart Context Allocation (BM25 + Dynamic Budget):** Automatically ranks fetched pages by relevance and gives the best ones more context budget while shrinking marginal ones. Same total size, far more signal per token. Deterministic and zero-cost.
 - **RAG & Context Lockdown:** Temporarily disables native document retrieval (RAG) and standard searches during its execution round to prevent Open WebUI from polluting the prompt with conflicting background data.
 
@@ -120,6 +154,8 @@ EasySearch is highly customizable. Administrators can set global safety limits, 
 | **Oversampling Factor** | `2` | Multiplier for search requests. If set to 2, and the target is 10 pages, EasySearch fetches 20 links from the search engine, deduplicates them, and only downloads the top 10 valid ones. |
 | **Max Results Per Query** | `20` | Hard cap on results requested per query to the search API. Default 20 is safe for all backends; raise up to 100 if your engine (e.g. SerpAPI, Exa, Serper) supports it. |
 | **Enable BM25 Rerank** | `True` | Rerank fetched sources by BM25 keyword relevance before building the LLM context. Deterministic, zero-cost. |
+| **Inject Snippet Pool** | `True` | Inject the snippet-only pool of unread search results into the LLM context, in addition to the fully-fetched and BM25-ranked sources. ON gives the model more grounding material at the cost of more citation pills in the UI; OFF keeps the context tight to fully-fetched pages only. Recommended ON for analytical/exploratory queries, OFF for short factual lookups. |
+| **Debug** | `False` | Enables verbose logging to the backend console *and* surfaces the `📊 src · raw → lxml → clean → ctx → reply` pipeline-stats line at the bottom of each response. Leave OFF for end users; turn ON when tuning or troubleshooting. |
 
 ---
 
@@ -140,7 +176,7 @@ Once the search context is built, EasySearch dynamically forces `body["features"
 Websites increasingly block bots with `403 Forbidden` errors. EasySearch combats this by:
 * Stripping tracking parameters (`utm_source`, `gclid`) from URLs to improve deduplication.
 * Utilizing `httpx` to fetch URLs concurrently, drastically reducing wait times.
-* Rotating through a carefully curated list of 20 unique, modern browser User-Agents (Windows, macOS, Linux, iOS, Android) per request.
+* Rotating through a carefully curated list of 40 unique, modern browser User-Agents (Windows, macOS, Linux, iOS, Android) per request.
 
 #### 4. The Gap-Filler (Auto-Recovery)
 If the user requests 10 pages, but 3 of them result in timeouts or 403s, traditional scrapers return only 7 results. If `Auto Recovery Fetch` is enabled, EasySearch detects the gap and dynamically executes a secondary parallel fetch utilizing the "leftovers" from the Oversampling pool, guaranteeing the requested payload size.

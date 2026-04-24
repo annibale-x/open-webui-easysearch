@@ -162,5 +162,12 @@ Context: BM25 is keyword-only and structurally blind to semantic matches (synony
 
 Candidate follow-ups evaluated but explicitly deferred:
 
-- **Snippet-pool reranking** — rerank `remaining_pool` (snippet-only) entries. Low ROI because the pool is secondary signal already; revisit if users report snippet-pool order complaints.
 - **Round-robin sub-query interleaving** — replicate `mcp-webgate/tools/query.py:110-128` to avoid one sub-query dominating the candidate pool. Requires N separate `process_web_search` calls (one per sub-query) instead of OWUI's batch call — significant refactor for moderate ROI.
+
+---
+
+## Resolved Out-of-Plan Work
+
+Items that were not scheduled milestones but landed during a fix cycle.
+
+- **Snippet-pool BM25 reranking** (shipped v0.4.3) — originally listed as low-ROI backlog, but the v0.4.3 citation-coherence work made it necessary: unfiltered pool entries were leaking off-topic citations into the UI and confusing models into citing slugs (`[REF]…[/REF]`). The pool now passes through the same BM25 + zero-score filter as the fetched sources before injection, with `emit_citation` per surviving entry. Admin valve `inject_snippet_pool` controls whether the pool reaches the LLM context at all.
