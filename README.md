@@ -8,64 +8,41 @@ An intelligent, context-aware web search filter for Open WebUI. EasySearch bypas
 
 ---
 
-### 🆕 What's New in v0.4.3 — Citation Coherence & Pipeline Refinements
+### 🆕 What's New in v0.4 — Relevance-First Search
 
-The v0.4.x line introduced relevance-based budget allocation; v0.4.3 closes the
-loop on what reaches the model and what shows up in the UI.
+Answers are only as good as the context the model receives. The v0.4 line
+rewires what gets read, what gets cited, and how it gets organised — same
+total context size, far better signal density, and citations that actually
+work in the UI.
 
-- **🎯 Inline `[N]` citations now reliably map to UI sources.** Source blocks
-  switched to `[N] Title` so the label matches the inline marker 1:1, and the
-  full snippet pool is now BM25-filtered and individually citation-registered —
-  no more dangling `[3]` or `[REF]…[/REF]` artefacts from models that improvise
-  their own citation format.
-- **🧹 Off-topic snippets are dropped before they reach the LLM.** Both the
-  fetched sources and the snippet-only oversampling pool are filtered through
-  the same BM25 zero-score gate, so Python `self` tutorials, Arabic Hamza
-  pages, and random topic news no longer leak into a query about autonomous
-  vehicles. Surviving sources inherit the budget the noise would have wasted.
-- **🧠 Prompt restructured around model attention.** Task framing
-  (`INSTRUCTION`, language anchor, snippet-priority hint) sits *before* the
-  search context; output rules (`CITATIONS`, `SECURITY`) sit *after*, where
-  recency bias makes them the last thing the model reads before generating.
-  This produced noticeably more verbose, well-structured answers across
-  Mistral, Gemma3, and Qwen3 thinking.
-- **📊 Reasoning models report honest reply lengths.** Qwen3 thinking,
-  DeepSeek-R1, Phi-reasoning chain-of-thought is now stripped before counting
-  the "reply" stat, so a 2k visible answer no longer reports as 14k.
-- **🎛️ New admin valve `inject_snippet_pool`** (default ON) — flip it OFF to
+- **🎯 Pages are ranked and budgeted by relevance.** A fast keyword-matching
+  algorithm (BM25) scores every fetched page against your question. The most
+  relevant pages get up to 3× the default character allowance; marginal pages
+  shrink to a short summary; off-topic noise (a Python tutorial that snuck
+  into an autonomous-vehicles query) is dropped entirely. Same total context
+  cost, packed with signal instead of filler.
+- **🔗 Citations that always resolve.** Inline `[N]` markers in the model's
+  reply now map 1:1 to the source pills in the OWUI sidebar — no more dangling
+  `[3]`, no more `[REF]…[/REF]` improvisations from models like Mistral, no
+  more pool-only snippets cited with invented slugs.
+- **🧠 Better-structured answers across small and reasoning models.** Tested
+  on Mistral 24B, Gemma3 27B, and Qwen3 thinking: replies are noticeably more
+  comprehensive and well-organised after the prompt was restructured around
+  how transformer attention actually behaves on long contexts.
+- **🎛️ New admin valve `inject_snippet_pool`** (default ON) — flip OFF to
   keep the LLM context tight to fully-fetched pages only, useful for short
-  factual lookups where pool clutter outweighs grounding signal.
-- **🔇 Pipeline stats are quiet by default.** The `📊 src · raw → lxml → clean
-  → ctx → reply` line is now appended to the response only when the admin
-  `debug` valve is ON; otherwise it goes only to the EasySearch debug log,
-  removing operator-only telemetry from the end-user view.
+  factual lookups where the snippet pool would just add noise.
 
----
+**In practice:** for a `??:10 <question>`, the two most relevant pages can
+each carry 8–12k characters of real body text while marginally-related ones
+shrink to ~200-char snippets and irrelevant ones disappear — instead of
+everyone getting a flat 4k slice. The answer you get back is noticeably more
+focused, and every cited source is one click away in the OWUI sidebar.
 
-### 🆕 What's New in v0.4.0 — Smart Context Allocation
-
-Answers are only as good as the context the model receives. Until now, EasySearch
-handed every fetched page the same chunk of characters — a great tutorial and a
-thin blog post both got the same slice. No more.
-
-- **🎯 Pages are ranked by relevance.** A fast keyword-matching algorithm (BM25)
-  scores every page against your question. The most relevant ones are placed first,
-  where the model pays most attention.
-- **💰 Smart budget, not equal shares.** The character budget is now split
-  *proportionally to relevance*. The best page can receive up to 3× the default
-  allowance; marginal pages shrink to a short summary. **Same total context
-  size, but packed with signal instead of noise.**
-- **♻️ No waste.** When a page fails to load or turns out thin, its leftover
-  budget is automatically reclaimed and handed to the pages that really had more
-  to say.
-- **🆓 Free and instant.** Pure math — no extra API calls, no extra dependencies,
-  no latency. If you prefer the old behavior, one toggle (`enable_bm25_rerank`)
-  turns it off.
-
-**In practice:** for a `?? <question>` with 10 sources, the top-ranked page now
-can carry 8–12k characters of real content while noisy or marginally-related
-pages get cut to a 200-char snippet — instead of everyone getting a flat 4k.
-The answer you get back is noticeably more focused.
+> Other changes / fixes (budget preservation across drops, surplus
+> reclamation, reasoning-model reply-length accounting, prompt internals,
+> User-Agent rotation pool expansion, debug-gated stats line, etc.) — see
+> [`CHANGELOG.md`](./CHANGELOG.md) for the full list.
 
 ---
 
